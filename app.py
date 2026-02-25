@@ -73,14 +73,19 @@ def append_df_to_ws(df: pd.DataFrame, ws_name: str):
     ws.append_rows(df2.values.tolist(), value_input_option="RAW")
 
 def read_ws_as_df(ws_name: str) -> pd.DataFrame:
-    """Lee una pestaña completa como DataFrame."""
     ws = _get_ws(ws_name)
     values = ws.get_all_values()
     if not values or len(values) < 2:
         return pd.DataFrame(columns=values[0] if values else [])
+
     headers = values[0]
+    headers = [str(h).replace("\xa0", " ").replace("\ufeff", "").strip() for h in headers]
+    headers = make_unique_columns(headers)   # ✅ clave
+
     rows = values[1:]
-    return pd.DataFrame(rows, columns=headers)
+    df = pd.DataFrame(rows, columns=headers)
+    return df
+    
 def construir_df_historico(uploaded_file, raw_name: str, h: str) -> pd.DataFrame:
     df_new = leer_siigo_excel(uploaded_file)
     if df_new.empty:
@@ -191,6 +196,20 @@ def require_login():
 
 # ✅ LLAMA ESTO ANTES DE MOSTRAR TU APP
 require_login()
+
+def make_unique_columns(cols):
+    """Convierte ['Fecha','Fecha','Valor'] -> ['Fecha','Fecha__2','Valor']"""
+    seen = {}
+    out = []
+    for c in cols:
+        c = str(c).strip()
+        if c not in seen:
+            seen[c] = 1
+            out.append(c)
+        else:
+            seen[c] += 1
+            out.append(f"{c}__{seen[c]}")
+    return out
 # =========================
 # CONFIG
 # =========================
@@ -410,8 +429,12 @@ def _file_hash_bytes(b: bytes) -> str:
 # =========================
 def leer_siigo_excel(uploaded_file, max_scan_rows: int = 60) -> pd.DataFrame:
     """
-    Detecta el header real buscando una fila que contenga 'comprobante' (clave universal).
-    No depende de "Proveedor/Cliente/Total" (porque SIIGO cambia headers).
+    Detecta el header real buscando una fila que contenga 'comprobante'.
+    Luego lee el Excel desde esa fila como encabezado.
+    Además:
+      - limpia nombres de columnas
+      - elimina columnas Unnamed
+      - elimina columnas duplicadas (para que no reviente pyarrow/Streamlit)
     """
     if uploaded_file is None:
         return pd.DataFrame()
@@ -440,14 +463,19 @@ def leer_siigo_excel(uploaded_file, max_scan_rows: int = 60) -> pd.DataFrame:
     bio = io.BytesIO(data)
     df = pd.read_excel(bio, engine="openpyxl", header=header_row)
 
-    # limpiar nombres columnas
+    # limpiar nombres de columnas
     df.columns = (
         df.columns.astype(str)
         .str.replace("\xa0", " ", regex=False)
         .str.replace("\ufeff", "", regex=False)
         .str.strip()
     )
-    df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
+
+    # quitar columnas tipo "Unnamed: 0"
+    df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")].copy()
+
+    # ✅ PUNTO 3: eliminar columnas duplicadas (clave para no romper Streamlit/pyarrow)
+    df = df.loc[:, ~df.columns.duplicated(keep="first")].copy()
 
     return df
 
@@ -1447,6 +1475,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
