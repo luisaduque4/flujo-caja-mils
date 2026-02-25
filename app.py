@@ -17,8 +17,17 @@ import gspread
 from google.oauth2.service_account import Credentials
 st.set_page_config(page_title="Flujo de Caja", layout="wide")
 # =========================
-# GOOGLE SHEETS (HISTÓRICOS)
+import time
+import gspread
+from google.oauth2.service_account import Credentials
+import streamlit as st
+import pandas as pd
+
 # =========================
+# GOOGLE SHEETS (HISTÓRICOS) - CON CACHÉ
+# =========================
+
+@st.cache_resource
 def _gs_client():
     sa_info = dict(st.secrets["gcp_service_account"])
     scopes = [
@@ -28,6 +37,7 @@ def _gs_client():
     creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
     return gspread.authorize(creds)
 
+@st.cache_resource
 def _open_sheet():
     sheet_id = st.secrets["SHEET_ID"]
     gc = _gs_client()
@@ -37,18 +47,31 @@ def _get_ws(ws_name: str):
     sh = _open_sheet()
     return sh.worksheet(ws_name)
 
+@st.cache_data(ttl=30)  # cachea lectura 30s para no quemar cuota
+def read_ws_as_df(ws_name: str) -> pd.DataFrame:
+    ws = _get_ws(ws_name)
+    values = ws.get_all_values()
+
+    if not values or len(values) < 2:
+        return pd.DataFrame(columns=values[0] if values else [])
+
+    headers = values[0]
+    headers = [str(h).replace("\xa0", " ").replace("\ufeff", "").strip() for h in headers]
+    headers = make_unique_columns(headers)
+
+    rows = values[1:]
+    return pd.DataFrame(rows, columns=headers)
+
 def append_df_to_ws(df: pd.DataFrame, ws_name: str):
-    """Append de filas al final de la pestaña ws_name.
-       Si es la primera vez, crea headers."""
     if df is None or df.empty:
         return
 
-    ws = _get_ws(ws_name)
+    # ✅ cada vez que escribes, limpias cache de lectura para que se vea lo nuevo
+    read_ws_as_df.clear()
 
-    # Convertimos todo a string “amigable”
+    ws = _get_ws(ws_name)
     df2 = df.copy()
 
-    # Si hay fechas, mejor dejarlas como texto ISO para que no falle
     for c in df2.columns:
         if pd.api.types.is_datetime64_any_dtype(df2[c]):
             df2[c] = df2[c].dt.strftime("%Y-%m-%d")
@@ -56,35 +79,17 @@ def append_df_to_ws(df: pd.DataFrame, ws_name: str):
     df2 = df2.fillna("")
 
     headers = ws.row_values(1)
-
-    # Si la hoja está vacía, ponemos headers
     if len(headers) == 0:
         ws.append_row(list(df2.columns), value_input_option="RAW")
         headers = list(df2.columns)
 
-    # Si los headers no coinciden, alineamos columnas (no se daña)
-    # (usa headers existentes y completa faltantes)
     for col in headers:
         if col not in df2.columns:
             df2[col] = ""
-    df2 = df2[headers]  # respeta el orden de la hoja
 
-    # Append en bloque
+    df2 = df2[headers]
     ws.append_rows(df2.values.tolist(), value_input_option="RAW")
 
-def read_ws_as_df(ws_name: str) -> pd.DataFrame:
-    ws = _get_ws(ws_name)
-    values = ws.get_all_values()
-    if not values or len(values) < 2:
-        return pd.DataFrame(columns=values[0] if values else [])
-
-    headers = values[0]
-    headers = [str(h).replace("\xa0", " ").replace("\ufeff", "").strip() for h in headers]
-    headers = make_unique_columns(headers)   # ✅ clave
-
-    rows = values[1:]
-    df = pd.DataFrame(rows, columns=headers)
-    return df
     
 def construir_df_historico(uploaded_file, raw_name: str, h: str) -> pd.DataFrame:
     df_new = leer_siigo_excel(uploaded_file)
@@ -1511,6 +1516,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
