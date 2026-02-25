@@ -11,7 +11,43 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+import hashlib, hmac
+import streamlit as st
 
+def _hash(txt: str) -> str:
+    return hashlib.sha256(txt.encode("utf-8")).hexdigest()
+
+def require_login():
+    # Si ya entró, no molestamos
+    if st.session_state.get("auth_ok"):
+        return True
+
+    st.title("🔐 Acceso restringido")
+    st.caption("Flujo de Caja MILS")
+
+    user = st.text_input("Usuario")
+    pwd  = st.text_input("Contraseña", type="password")
+    st.divider()
+
+    if st.button("Entrar"):
+        # Leemos secretos (NO están en GitHub)
+        expected_user = st.secrets.get("APP_USER", "")
+        expected_hash = st.secrets.get("APP_PASS_SHA256", "")
+
+        ok_user = hmac.compare_digest(user.strip(), expected_user.strip())
+        ok_pass = hmac.compare_digest(_hash(pwd), expected_hash)
+
+        if ok_user and ok_pass:
+            st.session_state["auth_ok"] = True
+            st.success("✅ Listo. Entrando…")
+            st.rerun()
+        else:
+            st.error("Usuario o contraseña incorrectos.")
+
+    st.stop()
+
+# ✅ LLAMA ESTO ANTES DE MOSTRAR TU APP
+require_login()
 # =========================
 # CONFIG
 # =========================
@@ -1246,3 +1282,4 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
