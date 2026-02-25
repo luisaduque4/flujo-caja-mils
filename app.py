@@ -15,7 +15,7 @@ import hashlib, hmac
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
-
+st.set_page_config(page_title="Flujo de Caja", layout="wide")
 # =========================
 # GOOGLE SHEETS (HISTÓRICOS)
 # =========================
@@ -164,7 +164,19 @@ def sheet_hashes_set(ws_name: str) -> set:
 
 def _hash(txt: str) -> str:
     return hashlib.sha256(txt.encode("utf-8")).hexdigest()
-
+def make_unique_columns(cols):
+    """Convierte ['Fecha','Fecha','Valor'] -> ['Fecha','Fecha__2','Valor']"""
+    seen = {}
+    out = []
+    for c in cols:
+        c = str(c).strip()
+        if c not in seen:
+            seen[c] = 1
+            out.append(c)
+        else:
+            seen[c] += 1
+            out.append(f"{c}__{seen[c]}")
+    return out
 def require_login():
     # Si ya entró, no molestamos
     if st.session_state.get("auth_ok"):
@@ -196,24 +208,64 @@ def require_login():
 
 # ✅ LLAMA ESTO ANTES DE MOSTRAR TU APP
 require_login()
+def coalesce_cols(df: pd.DataFrame, base_name: str) -> pd.DataFrame:
+    """
+    Si existen columnas tipo base_name, base_name__2, base_name__3...
+    elige la que tenga MÁS datos (no vacíos) y la deja como base_name.
+    """
+    if df is None or df.empty:
+        return df
 
-def make_unique_columns(cols):
-    """Convierte ['Fecha','Fecha','Valor'] -> ['Fecha','Fecha__2','Valor']"""
-    seen = {}
-    out = []
+    cols = [c for c in df.columns if str(c) == base_name or str(c).startswith(base_name + "__")]
+    if len(cols) <= 1:
+        return df
+
+    # contar qué columna tiene más celdas no vacías
+    def score(col):
+        s = df[col].astype(str).str.strip()
+        return (s != "").sum()
+
+    best = max(cols, key=score)
+
+    # crear/reescribir la columna base_name con la mejor
+    df[base_name] = df[best]
+
+    # borrar las otras copias (menos la base_name)
     for c in cols:
-        c = str(c).strip()
-        if c not in seen:
-            seen[c] = 1
-            out.append(c)
-        else:
-            seen[c] += 1
-            out.append(f"{c}__{seen[c]}")
-    return out
+        if c != base_name:
+            df = df.drop(columns=[c], errors="ignore")
+
+    return df
+
+
+def limpiar_hist_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Limpia headers y arregla duplicadas típicas: Fecha, Comprobante, Valor, Tipo, Tercero/Cliente.
+    """
+    if df is None or df.empty:
+        return df
+
+    df = df.copy()
+    df.columns = (
+        df.columns.astype(str)
+        .str.replace("\xa0", " ", regex=False)
+        .str.replace("\ufeff", "", regex=False)
+        .str.strip()
+    )
+
+    # arreglar columnas duplicadas tipo __2
+    for base in ["Fecha", "Comprobante", "Valor", "Tipo", "Tercero", "Cliente", "Proveedor"]:
+        df = coalesce_cols(df, base)
+
+    # si aún quedaran duplicadas exactas, dejar la primera
+    df = df.loc[:, ~df.columns.duplicated(keep="first")].copy()
+
+    return df
+
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="Flujo de Caja", layout="wide")
+
 
 BASE_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BASE_DIR / "resultados"
@@ -600,22 +652,6 @@ def guardar_raw_y_append_historico(
 # =========================
 # CONFIG (año, saldo inicial, dias default)
 # =========================
-    if CONFIG_PATH.exists():
-        df = pd.read_excel(CONFIG_PATH)
-        if not df.empty:
-            r = df.iloc[0]
-            año = int(r.get("año", datetime.now().year))
-            saldo_ini = float(r.get("saldo_inicial", 0.0))
-            dias = int(r.get("dias_default", 30))
-
-            # ✅ NUEVO
-            cxp_ini = float(r.get("cxp_saldo_inicial", 0.0) or 0.0)
-            cxc_ini = float(r.get("cxc_saldo_inicial", 0.0) or 0.0)
-
-            return año, saldo_ini, dias, cxp_ini, cxc_ini
-
-    return datetime.now().year, 0.0, 30, 0.0, 0.0
-
 def render_branding():
     # --- CSS minimal ---
     st.markdown(
@@ -894,13 +930,13 @@ with tab_carga:
                 if h in ya:
                     continue  # ya estaba cargado
 
-            raw_name = f"ventas_raw_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{h[:8]}.xlsx"
-            df_new = construir_df_historico(f, raw_name, h)
+                raw_name = f"ventas_raw_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{h[:8]}.xlsx"
+                df_new = construir_df_historico(f, raw_name, h)
 
-            if not df_new.empty:
-                append_df_to_ws(df_new, "ventas_historico")
-                ok += 1
-                ya.add(h)
+                if not df_new.empty:
+                    append_df_to_ws(df_new, "ventas_historico")
+                    ok += 1
+                    ya.add(h)
 
         st.success(f"✅ Guardados {ok} archivo(s) en Google Sheets.")
         st.rerun()
@@ -925,13 +961,13 @@ with tab_carga:
                 if h in ya:
                     continue
 
-            raw_name = f"egresos_raw_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{h[:8]}.xlsx"
-            df_new = construir_df_historico(f, raw_name, h)
-
-            if not df_new.empty:
-                append_df_to_ws(df_new, "egresos_historico")
-                ok += 1
-                ya.add(h)
+                raw_name = f"egresos_raw_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{h[:8]}.xlsx"
+                df_new = construir_df_historico(f, raw_name, h)
+    
+                if not df_new.empty:
+                    append_df_to_ws(df_new, "egresos_historico")
+                    ok += 1
+                    ya.add(h)
 
         st.success(f"✅ Guardados {ok} archivo(s) en Google Sheets.")
         st.rerun()
@@ -1071,8 +1107,8 @@ with tab_flujo:
     egm_df = egresos_manuales_a_df(egm_data, meses_num)
 
     # -------- cargar historicos --------
-    dfv = read_ws_as_df("ventas_historico")
-    dfe = read_ws_as_df("egresos_historico")
+    dfv = limpiar_hist_df(read_ws_as_df("ventas_historico"))
+    dfe = limpiar_hist_df(read_ws_as_df("egresos_historico"))
 
     # =========================
    # =========================
@@ -1475,6 +1511,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
