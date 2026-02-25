@@ -13,6 +13,149 @@ import pandas as pd
 import streamlit as st
 import hashlib, hmac
 import streamlit as st
+import gspread
+from google.oauth2.service_account import Credentials
+
+# =========================
+# GOOGLE SHEETS (HISTÓRICOS)
+# =========================
+def _gs_client():
+    sa_info = dict(st.secrets["gcp_service_account"])
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(sa_info, scopes=scopes)
+    return gspread.authorize(creds)
+
+def _open_sheet():
+    sheet_id = st.secrets["SHEET_ID"]
+    gc = _gs_client()
+    return gc.open_by_key(sheet_id)
+
+def _get_ws(ws_name: str):
+    sh = _open_sheet()
+    return sh.worksheet(ws_name)
+
+def append_df_to_ws(df: pd.DataFrame, ws_name: str):
+    """Append de filas al final de la pestaña ws_name.
+       Si es la primera vez, crea headers."""
+    if df is None or df.empty:
+        return
+
+    ws = _get_ws(ws_name)
+
+    # Convertimos todo a string “amigable”
+    df2 = df.copy()
+
+    # Si hay fechas, mejor dejarlas como texto ISO para que no falle
+    for c in df2.columns:
+        if pd.api.types.is_datetime64_any_dtype(df2[c]):
+            df2[c] = df2[c].dt.strftime("%Y-%m-%d")
+
+    df2 = df2.fillna("")
+
+    headers = ws.row_values(1)
+
+    # Si la hoja está vacía, ponemos headers
+    if len(headers) == 0:
+        ws.append_row(list(df2.columns), value_input_option="RAW")
+        headers = list(df2.columns)
+
+    # Si los headers no coinciden, alineamos columnas (no se daña)
+    # (usa headers existentes y completa faltantes)
+    for col in headers:
+        if col not in df2.columns:
+            df2[col] = ""
+    df2 = df2[headers]  # respeta el orden de la hoja
+
+    # Append en bloque
+    ws.append_rows(df2.values.tolist(), value_input_option="RAW")
+
+def read_ws_as_df(ws_name: str) -> pd.DataFrame:
+    """Lee una pestaña completa como DataFrame."""
+    ws = _get_ws(ws_name)
+    values = ws.get_all_values()
+    if not values or len(values) < 2:
+        return pd.DataFrame(columns=values[0] if values else [])
+    headers = values[0]
+    rows = values[1:]
+    return pd.DataFrame(rows, columns=headers)
+def construir_df_historico(uploaded_file, raw_name: str, h: str) -> pd.DataFrame:
+    df_new = leer_siigo_excel(uploaded_file)
+    if df_new.empty:
+        return pd.DataFrame()
+
+    # --- Comprobante ---
+    col_comp = buscar_col(df_new, ["Comprobante"])
+    if col_comp is not None and col_comp != "Comprobante":
+        df_new = df_new.rename(columns={col_comp: "Comprobante"})
+    if "Comprobante" in df_new.columns:
+        df_new["Comprobante"] = (
+            df_new["Comprobante"].astype(str)
+            .str.replace("\ufeff", "", regex=False)
+            .str.strip()
+            .str.upper()
+        )
+        df_new = df_new[df_new["Comprobante"].astype(str).str.strip() != ""].copy()
+    else:
+        df_new["Comprobante"] = ""
+
+    # --- Fecha ---
+    col_fecha = buscar_col(df_new, ["Fecha"])
+    if col_fecha is None:
+        col_fecha = (buscar_col(df_new, ["Fecha elaboración"]) or
+                     buscar_col(df_new, ["Fecha elaboracion"]) or
+                     buscar_col(df_new, ["Fecha documento"]))
+    if col_fecha is not None and col_fecha != "Fecha":
+        df_new = df_new.rename(columns={col_fecha: "Fecha"})
+    if "Fecha" in df_new.columns:
+        df_new["Fecha"] = pd.to_datetime(df_new["Fecha"], errors="coerce", dayfirst=True)
+        df_new = df_new.dropna(subset=["Fecha"]).copy()
+    else:
+        df_new["Fecha"] = pd.NaT
+
+    # --- Valor ---
+    col_val = (buscar_col(df_new, ["Total"]) or buscar_col(df_new, ["Valor"]) or
+               buscar_col(df_new, ["Valor total"]) or buscar_col(df_new, ["Total documento"]))
+    if col_val is not None and col_val != "Valor":
+        df_new = df_new.rename(columns={col_val: "Valor"})
+    if "Valor" in df_new.columns:
+        df_new["Valor"] = to_monto_robusto(df_new["Valor"])
+    else:
+        df_new["Valor"] = 0.0
+
+    # --- Tipo ---
+    col_tipo = buscar_col(df_new, ["Tipo"])
+    if col_tipo is not None and col_tipo != "Tipo":
+        df_new = df_new.rename(columns={col_tipo: "Tipo"})
+    if "Tipo" not in df_new.columns:
+        df_new["Tipo"] = ""
+
+    # --- Tercero (Cliente/Proveedor) ---
+    col_ter = (buscar_col(df_new, ["Proveedor"]) or buscar_col(df_new, ["Cliente"]) or
+               buscar_col(df_new, ["Tercero"]) or buscar_col(df_new, ["Razón social"]) or
+               buscar_col(df_new, ["Razon social"]))
+    if col_ter is not None and col_ter != "Tercero":
+        df_new = df_new.rename(columns={col_ter: "Tercero"})
+    if "Tercero" not in df_new.columns:
+        df_new["Tercero"] = ""
+
+    # --- Metadatos ---
+    df_new["_source_file"] = raw_name
+    df_new["_source_hash"] = h
+    df_new["_loaded_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    return df_new
+
+
+def sheet_hashes_set(ws_name: str) -> set:
+    """Trae hashes ya cargados para no repetir archivos."""
+    df = read_ws_as_df(ws_name)
+    if df.empty or "_source_hash" not in df.columns:
+        return set()
+    return set(df["_source_hash"].astype(str).dropna().unique())
+
 
 def _hash(txt: str) -> str:
     return hashlib.sha256(txt.encode("utf-8")).hexdigest()
@@ -712,18 +855,29 @@ with tab_carga:
     st.subheader("Ventas SIIGO (histórico)")
     ventas_files = st.file_uploader("Sube Excel Ventas SIIGO (puedes subir varios)", type=["xlsx"], accept_multiple_files=True)
     if st.button("Guardar ventas en histórico"):
-        if not ventas_files:
-            st.warning("No subiste archivos.")
-        else:
-            raw_dir = RESULTS_DIR / "raw" / "ventas"
-            infos = []
-            for f in ventas_files:
-                info = guardar_raw_y_append_historico(f, raw_dir, VENTAS_HIST_PATH)
-                infos.append(info)
-            st.success(f"✅ Guardados {len(infos)} archivo(s).")
-            st.rerun()
+    if not ventas_files:
+        st.warning("No subiste archivos.")
+    else:
+        ya = sheet_hashes_set("ventas_historico")
+        ok = 0
+        for f in ventas_files:
+            file_bytes = f.getvalue()
+            h = _file_hash_bytes(file_bytes)
+            if h in ya:
+                continue  # ya estaba cargado
 
-    dfv_hist = pd.read_excel(VENTAS_HIST_PATH, engine="openpyxl") if VENTAS_HIST_PATH.exists() else pd.DataFrame()
+            raw_name = f"ventas_raw_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{h[:8]}.xlsx"
+            df_new = construir_df_historico(f, raw_name, h)
+
+            if not df_new.empty:
+                append_df_to_ws(df_new, "ventas_historico")
+                ok += 1
+                ya.add(h)
+
+        st.success(f"✅ Guardados {ok} archivo(s) en Google Sheets.")
+        st.rerun()
+
+    dfv_hist = read_ws_as_df("ventas_historico")
     st.info(f"Histórico ventas: {len(dfv_hist)} filas")
     if not dfv_hist.empty:
         st.dataframe(dfv_hist.tail(100), use_container_width=True)
@@ -732,18 +886,29 @@ with tab_carga:
     st.subheader("Egresos SIIGO (histórico)")
     egresos_files = st.file_uploader("Sube Excel Egresos SIIGO (puedes subir varios)", type=["xlsx"], accept_multiple_files=True, key="up_egr_hist")
     if st.button("Guardar egresos en histórico"):
-        if not egresos_files:
-            st.warning("No subiste archivos.")
-        else:
-            raw_dir = RESULTS_DIR / "raw" / "egresos"
-            infos = []
-            for f in egresos_files:
-                info = guardar_raw_y_append_historico(f, raw_dir, EGRESOS_HIST_PATH)
-                infos.append(info)
-            st.success(f"✅ Guardados {len(infos)} archivo(s).")
-            st.rerun()
+    if not egresos_files:
+        st.warning("No subiste archivos.")
+    else:
+        ya = sheet_hashes_set("egresos_historico")
+        ok = 0
+        for f in egresos_files:
+            file_bytes = f.getvalue()
+            h = _file_hash_bytes(file_bytes)
+            if h in ya:
+                continue
 
-    dfe_hist = pd.read_excel(EGRESOS_HIST_PATH, engine="openpyxl") if EGRESOS_HIST_PATH.exists() else pd.DataFrame()
+            raw_name = f"egresos_raw_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{h[:8]}.xlsx"
+            df_new = construir_df_historico(f, raw_name, h)
+
+            if not df_new.empty:
+                append_df_to_ws(df_new, "egresos_historico")
+                ok += 1
+                ya.add(h)
+
+        st.success(f"✅ Guardados {ok} archivo(s) en Google Sheets.")
+        st.rerun()
+
+    dfe_hist = read_ws_as_df("egresos_historico")
     st.info(f"Histórico egresos: {len(dfe_hist)} filas")
     if not dfe_hist.empty:
         st.dataframe(dfe_hist.tail(100), use_container_width=True)
@@ -756,7 +921,7 @@ with tab_clientes:
     _, _, dias_default, _, _ = cargar_config()
 
 
-    dfv_hist = pd.read_excel(VENTAS_HIST_PATH, engine="openpyxl") if VENTAS_HIST_PATH.exists() else pd.DataFrame()
+    dfe_hist = read_ws_as_df("egresos_historico")
     col_cli = buscar_col(dfv_hist, ["Cliente"]) or buscar_col(dfv_hist, ["Tercero"]) or buscar_col(dfv_hist, ["Razón social"]) or buscar_col(dfv_hist, ["Razon social"])
 
     if dfv_hist.empty or col_cli is None:
@@ -792,7 +957,7 @@ with tab_prov:
     st.subheader("Proveedores (días de pago)")
     _, _, dias_default, _, _ = cargar_config()
 
-    dfe_hist = pd.read_excel(EGRESOS_HIST_PATH, engine="openpyxl") if EGRESOS_HIST_PATH.exists() else pd.DataFrame()
+    dfe_hist = read_ws_as_df("egresos_historico")
 
     if dfe_hist.empty:
         st.warning("Sube primero egresos histórico.")
@@ -878,8 +1043,8 @@ with tab_flujo:
     egm_df = egresos_manuales_a_df(egm_data, meses_num)
 
     # -------- cargar historicos --------
-    dfv = pd.read_excel(VENTAS_HIST_PATH, engine="openpyxl") if VENTAS_HIST_PATH.exists() else pd.DataFrame()
-    dfe = pd.read_excel(EGRESOS_HIST_PATH, engine="openpyxl") if EGRESOS_HIST_PATH.exists() else pd.DataFrame()
+    dfv = read_ws_as_df("ventas_historico")
+    dfe = read_ws_as_df("egresos_historico")
 
     # =========================
    # =========================
@@ -1282,4 +1447,5 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
