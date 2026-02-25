@@ -855,16 +855,16 @@ with tab_carga:
     st.subheader("Ventas SIIGO (histórico)")
     ventas_files = st.file_uploader("Sube Excel Ventas SIIGO (puedes subir varios)", type=["xlsx"], accept_multiple_files=True)
     if st.button("Guardar ventas en histórico"):
-    if not ventas_files:
-        st.warning("No subiste archivos.")
-    else:
-        ya = sheet_hashes_set("ventas_historico")
-        ok = 0
-        for f in ventas_files:
-            file_bytes = f.getvalue()
-            h = _file_hash_bytes(file_bytes)
-            if h in ya:
-                continue  # ya estaba cargado
+        if not ventas_files:
+            st.warning("No subiste archivos.")
+        else:
+            ya = sheet_hashes_set("ventas_historico")
+            ok = 0
+            for f in ventas_files:
+                file_bytes = f.getvalue()
+                h = _file_hash_bytes(file_bytes)
+                if h in ya:
+                    continue  # ya estaba cargado
 
             raw_name = f"ventas_raw_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}_{h[:8]}.xlsx"
             df_new = construir_df_historico(f, raw_name, h)
@@ -1447,5 +1447,6 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
