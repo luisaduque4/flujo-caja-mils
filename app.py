@@ -362,10 +362,23 @@ def egresos_manuales_drive_a_df(anio: int, meses_num: list[int], filas: list[str
     cols = [str(m) for m in meses_num]
     out = pd.DataFrame(0.0, index=filas, columns=cols)
 
+    if df is None or df.empty:
+        return out
+
+    # ✅ FORZAR tipos (para que .dt no reviente)
+    df = df.copy()
+    df["Fecha"] = pd.to_datetime(df.get("Fecha", None), errors="coerce")
+    df["tipo"] = df.get("tipo", "").astype(str).str.upper().str.strip()
+    df["concepto"] = df.get("concepto", "").astype(str).str.strip()
+    df["valor"] = pd.to_numeric(df.get("valor", 0), errors="coerce").fillna(0.0)
+
+    # quitar filas sin fecha válida
+    df = df.dropna(subset=["Fecha"])
     if df.empty:
         return out
 
-    df = df[(df["tipo"] == "EGRESO") & (df["Fecha"].dt.year == anio) & (df["concepto"].isin(filas))].copy()
+    # filtro
+    df = df[(df["tipo"] == "EGRESO") & (df["Fecha"].dt.year == int(anio)) & (df["concepto"].isin(filas))].copy()
     if df.empty:
         return out
 
@@ -1815,6 +1828,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
