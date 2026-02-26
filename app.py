@@ -356,17 +356,6 @@ from datetime import date, datetime
 
 MANUALES_WS = "Manuales"
 
-def _ensure_headers(ws_name: str, headers: list[str]):
-    ws = _get_ws(ws_name)
-    values = ws.get_all_values()
-    if not values:
-        ws.update([headers])
-        return
-    first = values[0]
-    if [h.strip() for h in first] != headers:
-        ws.update([headers])
-
-
 def egresos_manuales_drive_a_df(anio: int, meses_num: list[int], filas: list[str]) -> pd.DataFrame:
     """Devuelve DF ancho: index=filas, columns='1'..'12'"""
     df = read_manuales_df()
@@ -440,10 +429,14 @@ PARAM_WS = "Parametros"
 SALDOS_WS = "Saldos_iniciales"
 
 def read_parametros() -> dict:
-    _ensure_headers(PARAM_WS, ["clave", "valor"])
-    df = read_ws_as_df(PARAM_WS)
+    try:
+        df = read_ws_as_df(PARAM_WS)   # lee lo que haya, sin validar headers
+    except Exception:
+        return {}
+
     if df.empty:
         return {}
+
     out = {}
     for _, r in df.iterrows():
         k = str(r.get("clave", "")).strip()
@@ -1822,6 +1815,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
