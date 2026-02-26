@@ -1312,39 +1312,74 @@ with tab_carga:
 # =========================
 # TAB CLIENTES (días)
 # =========================
+# =========================
+# TAB CLIENTES (días) ✅ CON FORM (NO RERUN POR CELDA)
+# =========================
 with tab_clientes:
     st.subheader("Clientes (días de pago)")
+
+    # Si ya migraste esto a Drive, puedes usar cargar_config_drive()
     _, _, dias_default, _, _ = cargar_config()
 
+    dfv_hist = read_ws_as_df("ventas_historico")
 
-    dfe_hist = read_ws_as_df("egresos_historico")
-    col_cli = buscar_col(dfv_hist, ["Cliente"]) or buscar_col(dfv_hist, ["Tercero"]) or buscar_col(dfv_hist, ["Razón social"]) or buscar_col(dfv_hist, ["Razon social"])
+    # detectar columna cliente (tolerante)
+    col_cli = (
+        buscar_col(dfv_hist, ["Cliente"]) or
+        buscar_col(dfv_hist, ["Tercero"]) or
+        buscar_col(dfv_hist, ["Razón social"]) or
+        buscar_col(dfv_hist, ["Razon social"])
+    )
 
     if dfv_hist.empty or col_cli is None:
-        st.warning("Sube primero ventas histórico.")
-    else:
-        clientes = dfv_hist[col_cli].astype(str).apply(normalizar_texto)
-        clientes = clientes[clientes.str.strip() != ""]
-        base = pd.DataFrame({"Cliente": sorted(clientes.unique())})
+        st.warning("Sube primero ventas histórico (ventas_historico) y verifica columna Cliente/Tercero.")
+        st.stop()
 
-        guardada = read_tabla_drive(CLIENTES_WS, ["Cliente","Dias_pago"])
-        if not guardada.empty:
-            guardada["Cliente"] = guardada["Cliente"].astype(str).apply(normalizar_texto)
-            guardada["Dias_pago"] = pd.to_numeric(guardada["Dias_pago"], errors="coerce")
+    # base de clientes únicos
+    clientes = dfv_hist[col_cli].astype(str).apply(normalizar_texto)
+    clientes = clientes[clientes.str.strip() != ""]
+    base = pd.DataFrame({"Cliente": sorted(clientes.unique())})
 
-        tabla = base.merge(guardada, on="Cliente", how="left")
-        tabla["Dias_pago"] = tabla["Dias_pago"].fillna(dias_default).astype(int)
+    # leer tabla guardada en Drive
+    guardada = read_tabla_drive(CLIENTES_WS, ["Cliente", "Dias_pago"])
+    if not guardada.empty:
+        guardada["Cliente"] = guardada["Cliente"].astype(str).apply(normalizar_texto)
+        guardada["Dias_pago"] = pd.to_numeric(guardada["Dias_pago"], errors="coerce")
 
-        edit = st.data_editor(tabla, use_container_width=True, num_rows="fixed",
-                              column_config={"Cliente": st.column_config.TextColumn(disabled=True)})
+    tabla = base.merge(guardada, on="Cliente", how="left")
+    tabla["Dias_pago"] = tabla["Dias_pago"].fillna(int(dias_default)).astype(int)
 
-        if st.button("Guardar tabla clientes"):
-            out = edit.copy()
-            out["Cliente"] = out["Cliente"].astype(str).apply(normalizar_texto)
-            out["Dias_pago"] = pd.to_numeric(out["Dias_pago"], errors="coerce").fillna(dias_default).astype(int)
-            out = out.groupby("Cliente", as_index=False)["Dias_pago"].max()
-            write_tabla_drive(CLIENTES_WS, out, ["Cliente","Dias_pago"])
-            st.success("Guardado ✅")
+    # ✅ FORM: solo guarda cuando oprimes botón
+    with st.form("form_clientes"):
+        edit = st.data_editor(
+            tabla,
+            use_container_width=True,
+            num_rows="fixed",
+            column_config={
+                "Cliente": st.column_config.TextColumn("Cliente", disabled=True),
+                "Dias_pago": st.column_config.NumberColumn("Días de pago", min_value=0, step=1),
+            },
+            key="editor_clientes",
+        )
+        submitted = st.form_submit_button("Guardar tabla clientes")
+
+    if submitted:
+        out = edit.copy()
+        out["Cliente"] = out["Cliente"].astype(str).apply(normalizar_texto)
+        out["Dias_pago"] = (
+            pd.to_numeric(out["Dias_pago"], errors="coerce")
+            .fillna(int(dias_default))
+            .astype(int)
+        )
+        out = out.groupby("Cliente", as_index=False)["Dias_pago"].max()
+
+        write_tabla_drive(CLIENTES_WS, out, ["Cliente", "Dias_pago"])
+
+        # limpiar caches para que se vea inmediato
+        read_ws_as_df.clear()
+        st.cache_data.clear()
+
+        st.success("Guardado ✅")
 
 # =========================
 # TAB PROVEEDORES (días)
@@ -1845,6 +1880,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
