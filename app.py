@@ -18,15 +18,15 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(page_title="Flujo de Caja", layout="wide")
 # =========================
 import time
+import pandas as pd
+import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
-import streamlit as st
-import pandas as pd
+from gspread.exceptions import APIError
 
 # =========================
-# GOOGLE SHEETS (HISTÓRICOS) - CON CACHÉ
+# GOOGLE SHEETS (HISTÓRICOS) - CACHE FUERTE
 # =========================
-
 @st.cache_resource
 def _gs_client():
     sa_info = dict(st.secrets["gcp_service_account"])
@@ -43,25 +43,25 @@ def _open_sheet():
     gc = _gs_client()
     return gc.open_by_key(sheet_id)
 
+@st.cache_resource
 def _get_ws(ws_name: str):
     sh = _open_sheet()
-    return sh.worksheet(ws_name)
+    return sh.worksheet(ws_name)   # ✅ queda cacheado por nombre
 
-@st.cache_data(ttl=30)  # cachea lectura 30s para no quemar cuota
+@st.cache_data(ttl=30)
 def read_ws_as_df(ws_name: str) -> pd.DataFrame:
     ws = _get_ws(ws_name)
     values = ws.get_all_values()
 
-    if not values or len(values) < 2:
-        return pd.DataFrame(columns=values[0] if values else [])
+    if not values:
+        return pd.DataFrame()
 
     headers = values[0]
     headers = [str(h).replace("\xa0", " ").replace("\ufeff", "").strip() for h in headers]
     headers = make_unique_columns(headers)
 
-    rows = values[1:]
+    rows = values[1:] if len(values) > 1 else []
     return pd.DataFrame(rows, columns=headers)
-
 # =========================
 # MANUALES + SALDOS INICIALES (GOOGLE SHEETS)
 # =========================
@@ -1173,8 +1173,9 @@ with tab_presupuesto:
         st.success("Presupuesto guardado ✅")
 
     st.markdown("### Presupuesto guardado en Drive (Parametros)")
-    st.dataframe(read_ws_as_df(PARAM_WS), use_container_width=True)
-
+    with st.expander("Ver Parametros (solo cuando lo necesite)"):
+        if st.button("Cargar Parametros", key="btn_ver_param"):
+            st.dataframe(read_ws_as_df(PARAM_WS), use_container_width=True)
 # =========================
 # TAB SALDO INICIAL
 # =========================
@@ -1215,35 +1216,31 @@ with tab_saldo_ini:
 
 # =========================
 # =========================
-# TAB EGRESOS MANUALES (DRIVE)
+# =========================
+# TAB EGRESOS MANUALES (DRIVE) - SIN RERUN LOCO
 # =========================
 with tab_egm:
     st.header("Egresos manuales (Drive)")
 
     meses_num = list(range(1, 13))
-
-    # usa tu año actual si ya lo tienes; si no, deja esto:
     anio = st.session_state.get("ANIO", datetime.today().year)
 
-    # CARGA desde Drive -> matriz 12 meses
     egm_df = egresos_manuales_drive_a_df(anio, meses_num, EGRESOS_MANUALES_FILAS)
 
-    egm_edit = st.data_editor(
-        egm_df,
-        use_container_width=True,
-        num_rows="fixed"
-    )
+    with st.form("form_egresos_manuales"):
+        egm_edit = st.data_editor(
+            egm_df,
+            use_container_width=True,
+            num_rows="fixed",
+            key="editor_egm"
+        )
+        submitted = st.form_submit_button("Guardar egresos manuales")
 
-    if st.button("Guardar egresos manuales", key="btn_guardar_egm_drive"):
+    if submitted:
         guardar_egresos_manuales_drive(anio, egm_edit, meses_num, EGRESOS_MANUALES_FILAS)
+        read_ws_as_df.clear()
         st.cache_data.clear()
         st.success("Guardado en Drive ✅")
-
-
-    st.markdown("### Lo que está guardado en Drive")
-    df_man = read_manuales_df()
-    st.dataframe(df_man, use_container_width=True)
-
 # =========================
 # TAB CARGA HISTÓRICO
 # =========================
@@ -1880,6 +1877,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
