@@ -553,6 +553,23 @@ def guardar_presupuesto_drive(pres_data: dict):
     # lo guardamos como un string JSON en Parametros
     raw = json.dumps(pres_data, ensure_ascii=False)
     upsert_parametro(PRESUPUESTO_KEY, raw)
+
+CLIENTES_WS = "Clientes"
+PROVEEDORES_WS = "Proveedores"
+
+def read_tabla_drive(ws_name: str, columnas: list[str]) -> pd.DataFrame:
+    _ensure_headers(ws_name, columnas)
+    df = read_ws_as_df(ws_name)
+    for c in columnas:
+        if c not in df.columns:
+            df[c] = ""
+    return df[columnas]
+
+def write_tabla_drive(ws_name: str, df: pd.DataFrame, columnas: list[str]):
+    _ensure_headers(ws_name, columnas)
+    ws = _get_ws(ws_name)
+    ws.clear()
+    ws.update("A1", [columnas] + df[columnas].fillna("").values.tolist(), value_input_option="USER_ENTERED")
 # =========================
 # CONFIG
 # =========================
@@ -1311,7 +1328,7 @@ with tab_clientes:
         clientes = clientes[clientes.str.strip() != ""]
         base = pd.DataFrame({"Cliente": sorted(clientes.unique())})
 
-        guardada = cargar_tabla(TABLA_CLIENTES_PATH, ["Cliente", "Dias_pago"])
+        guardada = read_tabla_drive(CLIENTES_WS, ["Cliente","Dias_pago"])
         if not guardada.empty:
             guardada["Cliente"] = guardada["Cliente"].astype(str).apply(normalizar_texto)
             guardada["Dias_pago"] = pd.to_numeric(guardada["Dias_pago"], errors="coerce")
@@ -1327,7 +1344,7 @@ with tab_clientes:
             out["Cliente"] = out["Cliente"].astype(str).apply(normalizar_texto)
             out["Dias_pago"] = pd.to_numeric(out["Dias_pago"], errors="coerce").fillna(dias_default).astype(int)
             out = out.groupby("Cliente", as_index=False)["Dias_pago"].max()
-            guardar_tabla(out, TABLA_CLIENTES_PATH)
+            write_tabla_drive(CLIENTES_WS, out, ["Cliente","Dias_pago"])
             st.success("Guardado ✅")
 
 # =========================
@@ -1364,7 +1381,7 @@ with tab_prov:
             prov = prov[prov.str.strip() != ""]
             base = pd.DataFrame({"Proveedor": sorted(prov.unique())})
 
-            guardada = cargar_tabla(TABLA_PROVEEDORES_PATH, ["Proveedor", "Dias_pago"])
+            guardada = read_tabla_drive(PROVEEDORES_WS, ["Proveedor", "Dias_pago"])
             if not guardada.empty:
                 guardada["Proveedor"] = guardada["Proveedor"].astype(str).apply(normalizar_texto)
                 guardada["Dias_pago"] = pd.to_numeric(guardada["Dias_pago"], errors="coerce")
@@ -1384,7 +1401,7 @@ with tab_prov:
                 out["Proveedor"] = out["Proveedor"].astype(str).apply(normalizar_texto)
                 out["Dias_pago"] = pd.to_numeric(out["Dias_pago"], errors="coerce").fillna(int(dias_default)).astype(int)
                 out = out.groupby("Proveedor", as_index=False)["Dias_pago"].max()
-                guardar_tabla(out, TABLA_PROVEEDORES_PATH)
+                write_tabla_drive(PROVEEDORES_WS, out, ["Proveedor", "Dias_pago"])
                 st.success("Guardado ✅")
 
 # =========================
@@ -1828,6 +1845,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
