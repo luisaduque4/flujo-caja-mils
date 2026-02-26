@@ -1395,9 +1395,9 @@ with tab_flujo:
 
     if st.button("Guardar configuración", key="btn_guardar_config_flujo"):
     # ojo: aquí también guardas cxp/cxc en el otro tab, pero en este tab guardamos lo que existe aquí
-    guardar_config_drive(int(año), float(saldo_inicial), int(dias_default), float(cxp_cfg), float(cxc_cfg))
-    st.cache_data.clear()
-    st.success("Guardado en Drive ✅")
+        guardar_config_drive(int(año), float(saldo_inicial), int(dias_default), float(cxp_cfg), float(cxc_cfg))
+        st.cache_data.clear()
+        st.success("Guardado en Drive ✅")
 
     modo_corte = st.selectbox("Fecha de corte para roll-forward",
                               ["A) Hoy", "B) Fin del año", "C) Elegir fecha"], index=0)
@@ -1819,6 +1819,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
