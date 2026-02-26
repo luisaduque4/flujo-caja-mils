@@ -558,8 +558,7 @@ CLIENTES_WS = "Clientes"
 PROVEEDORES_WS = "Proveedores"
 
 def read_tabla_drive(ws_name: str, columnas: list[str]) -> pd.DataFrame:
-    _ensure_headers(ws_name, columnas)
-    df = read_ws_as_df(ws_name)
+    df = read_ws_as_df(ws_name)  # lectura cacheada
     for c in columnas:
         if c not in df.columns:
             df[c] = ""
@@ -1359,7 +1358,6 @@ with tab_prov:
     if dfe_hist.empty:
         st.warning("Sube primero egresos histórico.")
     else:
-        # Normalizar columnas
         dfe_hist = dfe_hist.copy()
         dfe_hist.columns = (
             dfe_hist.columns.astype(str)
@@ -1369,14 +1367,11 @@ with tab_prov:
         )
         dfe_hist = dfe_hist.loc[:, ~dfe_hist.columns.duplicated(keep="first")].copy()
 
-        # ✅ Crear la llave "Proveedor_key" detectando la columna correcta
         dfe_hist, col_origen = preparar_proveedor_key(dfe_hist)
 
         if not col_origen:
             st.warning("No encontré columna de proveedor (Tercero/Proveedor/Razón social).")
         else:
-            st.caption(f"Proveedor detectado desde columna: {col_origen}")
-
             prov = dfe_hist["Proveedor_key"].astype(str)
             prov = prov[prov.str.strip() != ""]
             base = pd.DataFrame({"Proveedor": sorted(prov.unique())})
@@ -1389,20 +1384,25 @@ with tab_prov:
             tabla = base.merge(guardada, on="Proveedor", how="left")
             tabla["Dias_pago"] = tabla["Dias_pago"].fillna(int(dias_default)).astype(int)
 
-            edit = st.data_editor(
-                tabla,
-                use_container_width=True,
-                num_rows="fixed",
-                column_config={"Proveedor": st.column_config.TextColumn(disabled=True)}
-            )
+            # ✅ FORM: no rerun por cada edición
+            with st.form("form_proveedores"):
+                edit = st.data_editor(
+                    tabla,
+                    use_container_width=True,
+                    num_rows="fixed",
+                    column_config={"Proveedor": st.column_config.TextColumn(disabled=True)},
+                    key="editor_proveedores"
+                )
+                submitted = st.form_submit_button("Guardar tabla proveedores")
 
-            if st.button("Guardar tabla proveedores"):
+            if submitted:
                 out = edit.copy()
                 out["Proveedor"] = out["Proveedor"].astype(str).apply(normalizar_texto)
                 out["Dias_pago"] = pd.to_numeric(out["Dias_pago"], errors="coerce").fillna(int(dias_default)).astype(int)
                 out = out.groupby("Proveedor", as_index=False)["Dias_pago"].max()
                 write_tabla_drive(PROVEEDORES_WS, out, ["Proveedor", "Dias_pago"])
                 st.success("Guardado ✅")
+                st.cache_data.clear()
 
 # =========================
 # TAB FLUJO MENSUAL
@@ -1548,7 +1548,7 @@ with tab_flujo:
                 .reindex(meses_num, fill_value=0.0)
             )
 
-        tabla_clientes = cargar_tabla(TABLA_CLIENTES_PATH, ["Cliente", "Dias_pago"])
+        tabla_clientes = read_tabla_drive(CLIENTES_WS, ["Cliente","Dias_pago"])
 
         base_ing, fv_dbg = proyectar_fv_por_dias(
             df_fv=fv,
@@ -1845,6 +1845,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
