@@ -62,6 +62,78 @@ def read_ws_as_df(ws_name: str) -> pd.DataFrame:
     rows = values[1:]
     return pd.DataFrame(rows, columns=headers)
 
+# =========================
+# MANUALES + SALDOS INICIALES (GOOGLE SHEETS)
+# =========================
+
+MANUALES_WS = "Manuales"
+SALDOS_WS   = "Saldos_iniciales"
+
+
+def _ensure_headers(ws_name: str, headers: list[str]):
+    ws = _get_ws(ws_name)
+    values = ws.get_all_values()
+    if not values:
+        ws.update([headers])
+        return
+    # si la primera fila no coincide, la reponemos (suave)
+    first = values[0]
+    if [h.strip() for h in first] != headers:
+        ws.update([headers])
+
+
+def append_row_ws(ws_name: str, row: list):
+    """Agrega una fila al final (no borra nada)."""
+    ws = _get_ws(ws_name)
+    ws.append_row(row, value_input_option="USER_ENTERED")
+
+
+def upsert_saldo_inicial(mes: str, saldo: float):
+    """
+    Inserta/actualiza el saldo inicial de un mes (col A: mes, col B: saldo).
+    mes formato 'YYYY-MM' ej: '2026-03'
+    """
+    _ensure_headers(SALDOS_WS, ["mes", "saldo"])
+    ws = _get_ws(SALDOS_WS)
+    values = ws.get_all_values()
+
+    # si solo hay headers
+    if len(values) <= 1:
+        ws.append_row([mes, saldo], value_input_option="USER_ENTERED")
+        return
+
+    # buscar mes existente
+    for i, r in enumerate(values[1:], start=2):  # fila real en sheet
+        if len(r) > 0 and r[0].strip() == mes:
+            ws.update(f"B{i}", [[saldo]], value_input_option="USER_ENTERED")
+            return
+
+    # si no existe, lo agrega
+    ws.append_row([mes, saldo], value_input_option="USER_ENTERED")
+
+
+def read_manuales_df() -> pd.DataFrame:
+    _ensure_headers(MANUALES_WS, ["Fecha", "concepto", "tipo", "valor"])
+    df = read_ws_as_df(MANUALES_WS)
+
+    # normalización suave
+    if not df.empty:
+        df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
+        df["concepto"] = df["concepto"].astype(str).fillna("")
+        df["tipo"] = df["tipo"].astype(str).str.upper().str.strip()
+        df["valor"] = pd.to_numeric(df["valor"], errors="coerce").fillna(0.0)
+
+    return df
+
+
+def read_saldos_iniciales_df() -> pd.DataFrame:
+    _ensure_headers(SALDOS_WS, ["mes", "saldo"])
+    df = read_ws_as_df(SALDOS_WS)
+    if not df.empty:
+        df["mes"] = df["mes"].astype(str).str.strip()
+        df["saldo"] = pd.to_numeric(df["saldo"], errors="coerce").fillna(0.0)
+    return df
+
 def append_df_to_ws(df: pd.DataFrame, ws_name: str):
     if df is None or df.empty:
         return
@@ -266,7 +338,212 @@ def limpiar_hist_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.loc[:, ~df.columns.duplicated(keep="first")].copy()
 
     return df
+from datetime import date, datetime
 
+MANUALES_WS = "Manuales"
+
+def _ensure_headers(ws_name: str, headers: list[str]):
+    ws = _get_ws(ws_name)
+    values = ws.get_all_values()
+    if not values:
+        ws.update([headers])
+        return
+    first = values[0]
+    if [h.strip() for h in first] != headers:
+        ws.update([headers])
+
+def read_manuales_df() -> pd.DataFrame:
+    _ensure_headers(MANUALES_WS, ["Fecha", "concepto", "tipo", "valor"])
+    df = read_ws_as_df(MANUALES_WS)
+    if df.empty:
+        return df
+
+    df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
+    df["concepto"] = df["concepto"].astype(str).fillna("")
+    df["tipo"] = df["tipo"].astype(str).str.upper().str.strip()
+    df["valor"] = pd.to_numeric(df["valor"], errors="coerce").fillna(0.0)
+    return df
+
+def egresos_manuales_drive_a_df(anio: int, meses_num: list[int], filas: list[str]) -> pd.DataFrame:
+    """Devuelve DF ancho: index=filas, columns='1'..'12'"""
+    df = read_manuales_df()
+    cols = [str(m) for m in meses_num]
+    out = pd.DataFrame(0.0, index=filas, columns=cols)
+
+    if df.empty:
+        return out
+
+    df = df[(df["tipo"] == "EGRESO") & (df["Fecha"].dt.year == anio) & (df["concepto"].isin(filas))].copy()
+    if df.empty:
+        return out
+
+    df["mes"] = df["Fecha"].dt.month
+    grp = df.groupby(["concepto", "mes"], as_index=False)["valor"].sum()
+
+    for _, r in grp.iterrows():
+        concepto = r["concepto"]
+        mes = int(r["mes"])
+        if str(mes) in out.columns and concepto in out.index:
+            out.loc[concepto, str(mes)] = float(r["valor"])
+
+    return out
+
+def guardar_egresos_manuales_drive(anio: int, egm_edit: pd.DataFrame, meses_num: list[int], filas: list[str]):
+    """
+    Reemplaza en la hoja Manuales SOLO los EGRESOS de ese año y esos conceptos.
+    Mantiene ingresos u otros manuales intactos.
+    """
+    _ensure_headers(MANUALES_WS, ["Fecha", "concepto", "tipo", "valor"])
+    ws = _get_ws(MANUALES_WS)
+
+    # Leer TODO lo que existe en la hoja
+    values = ws.get_all_values()
+    if not values:
+        values = [["Fecha", "concepto", "tipo", "valor"]]
+
+    headers = values[0]
+    rows = values[1:]
+
+    # Mantener filas que NO sean (EGRESO + año + concepto en filas)
+    kept = []
+    for r in rows:
+        # r puede venir corta
+        f = r[0] if len(r) > 0 else ""
+        c = r[1] if len(r) > 1 else ""
+        t = r[2] if len(r) > 2 else ""
+        v = r[3] if len(r) > 3 else ""
+
+        dt = pd.to_datetime(f, errors="coerce")
+        t_norm = str(t).upper().strip()
+
+        if (t_norm == "EGRESO") and (not pd.isna(dt)) and (dt.year == anio) and (c in filas):
+            continue  # la descartamos (la vamos a reemplazar)
+        kept.append([f, c, t, v])
+
+    # Construir nuevas filas desde el editor (solo valores != 0)
+    new_rows = []
+    for concepto in filas:
+        for m in meses_num:
+            val = float(egm_edit.loc[concepto, str(m)] or 0)
+            if abs(val) > 0:
+                fecha = date(anio, int(m), 1).isoformat()  # 1er día del mes
+                new_rows.append([fecha, concepto, "EGRESO", val])
+
+    # Reescribir hoja completa (headers + kept + new)
+    ws.clear()
+    ws.update([headers] + kept + new_rows, value_input_option="USER_ENTERED")
+
+PARAM_WS = "Parametros"
+SALDOS_WS = "Saldos_iniciales"
+
+def read_parametros() -> dict:
+    _ensure_headers(PARAM_WS, ["clave", "valor"])
+    df = read_ws_as_df(PARAM_WS)
+    if df.empty:
+        return {}
+    out = {}
+    for _, r in df.iterrows():
+        k = str(r.get("clave", "")).strip()
+        v = r.get("valor", "")
+        if k:
+            out[k] = v
+    return out
+
+def upsert_parametro(clave: str, valor):
+    _ensure_headers(PARAM_WS, ["clave", "valor"])
+    ws = _get_ws(PARAM_WS)
+    values = ws.get_all_values()
+
+    if len(values) <= 1:
+        ws.append_row([clave, valor], value_input_option="USER_ENTERED")
+        return
+
+    for i, r in enumerate(values[1:], start=2):
+        if len(r) > 0 and str(r[0]).strip() == clave:
+            ws.update(f"B{i}", [[valor]], value_input_option="USER_ENTERED")
+            return
+
+    ws.append_row([clave, valor], value_input_option="USER_ENTERED")
+
+
+def cargar_config_drive():
+    """
+    Retorna: año, saldo_ini, dias_default, cxp_ini, cxc_ini
+    con defaults si no existe nada.
+    """
+    p = read_parametros()
+
+    def _num(x, default=0.0):
+        try:
+            return float(str(x).replace(",", "").strip())
+        except:
+            return float(default)
+
+    def _int(x, default=0):
+        try:
+            return int(float(str(x).replace(",", "").strip()))
+        except:
+            return int(default)
+
+    año = _int(p.get("anio", datetime.today().year), datetime.today().year)
+    saldo_ini = _num(p.get("saldo_ini_caja_mes1", 0), 0)
+    dias_default = _int(p.get("dias_default", 30), 30)
+    cxp_ini = _num(p.get("cxp_ini_bolsa", 0), 0)
+    cxc_ini = _num(p.get("cxc_ini_bolsa", 0), 0)
+
+    return año, saldo_ini, dias_default, cxp_ini, cxc_ini
+
+
+def guardar_config_drive(año_new: int, saldo_new: float, dias_new: int, cxp_ini_new: float, cxc_ini_new: float):
+    upsert_parametro("anio", año_new)
+    upsert_parametro("saldo_ini_caja_mes1", saldo_new)
+    upsert_parametro("dias_default", dias_new)
+    upsert_parametro("cxp_ini_bolsa", cxp_ini_new)
+    upsert_parametro("cxc_ini_bolsa", cxc_ini_new)
+
+import json
+
+PRESUPUESTO_KEY = "presupuesto_json"  # clave dentro de Parametros
+
+def cargar_presupuesto_drive(meses_num: list[int]) -> dict:
+    """
+    Devuelve el mismo dict que tú usas: saldo_ini_enero, ingresos_pres, egresos_pres, saldo_ini_override_mes
+    """
+    p = read_parametros()
+    raw = p.get(PRESUPUESTO_KEY, "")
+
+    # defaults
+    data = {
+        "saldo_ini_enero": 0.0,
+        "ingresos_pres": {str(m): 0.0 for m in meses_num},
+        "egresos_pres": {str(m): 0.0 for m in meses_num},
+        "saldo_ini_override_mes": {str(m): None for m in meses_num},
+    }
+
+    if not raw:
+        return data
+
+    try:
+        loaded = json.loads(raw)
+        # merge suave para no romper si faltan llaves
+        data["saldo_ini_enero"] = float(loaded.get("saldo_ini_enero", data["saldo_ini_enero"]) or 0)
+        data["ingresos_pres"].update({str(k): float(v or 0) for k, v in loaded.get("ingresos_pres", {}).items()})
+        data["egresos_pres"].update({str(k): float(v or 0) for k, v in loaded.get("egresos_pres", {}).items()})
+        # overrides pueden ser None
+        ovr = loaded.get("saldo_ini_override_mes", {})
+        for m in meses_num:
+            vv = ovr.get(str(m), None)
+            data["saldo_ini_override_mes"][str(m)] = None if vv is None else float(vv)
+        return data
+    except:
+        # si el JSON está dañado, devolvemos defaults
+        return data
+
+
+def guardar_presupuesto_drive(pres_data: dict):
+    # lo guardamos como un string JSON en Parametros
+    raw = json.dumps(pres_data, ensure_ascii=False)
+    upsert_parametro(PRESUPUESTO_KEY, raw)
 # =========================
 # CONFIG
 # =========================
@@ -821,7 +1098,7 @@ tab_carga, tab_saldo_ini, tab_clientes, tab_prov, tab_egm, tab_presupuesto, tab_
 with tab_presupuesto:
     st.subheader("Supuestos presupuesto")
     meses_num = list(range(1, 13))
-    pres_data = cargar_presupuesto_json(PRESUPUESTO_JSON, meses_num)
+    pres_data = cargar_presupuesto_drive(meses_num)
 
     st.markdown("### Saldo inicial presupuestado (Enero)")
     pres_data["saldo_ini_enero"] = st.number_input(
@@ -866,8 +1143,12 @@ with tab_presupuesto:
                 pres_data["saldo_ini_override_mes"][str(m)] = None
 
     if st.button("Guardar presupuesto"):
-        guardar_presupuesto_json(PRESUPUESTO_JSON, pres_data)
+        guardar_presupuesto_drive(pres_data)
+        st.cache_data.clear()
         st.success("Presupuesto guardado ✅")
+
+    st.markdown("### Presupuesto guardado en Drive (Parametros)")
+    st.dataframe(read_ws_as_df(PARAM_WS), use_container_width=True)
 
 # =========================
 # TAB SALDO INICIAL
@@ -875,7 +1156,7 @@ with tab_presupuesto:
 with tab_saldo_ini:
     st.subheader("Ingresar saldos iniciales")
 
-    año_cfg, saldo_cfg, dias_default_cfg, cxp_cfg, cxc_cfg = cargar_config()
+    año_cfg, saldo_cfg, dias_default_cfg, cxp_cfg, cxc_cfg = cargar_config_drive()
 
     st.caption("Estos saldos (CXP y CXC) se usan como 'bolsas' y se asumen vencidos: "
                "entran/pagan completos en el mes de corte del flujo.")
@@ -896,26 +1177,51 @@ with tab_saldo_ini:
         cxc_ini_new = st.number_input("CXC saldo inicial (cuentas por cobrar) - bolsa", value=float(cxc_cfg), step=100000.0, key="cfg_cxc_ini")
 
     if st.button("Guardar saldos iniciales", key="btn_guardar_saldos_ini"):
-        guardar_config(int(año_new), float(saldo_new), int(dias_new), float(cxp_ini_new), float(cxc_ini_new))
+        guardar_config_drive(int(año_new), float(saldo_new), int(dias_new), float(cxp_ini_new), float(cxc_ini_new))
+        st.cache_data.clear()
         st.success("✅ Guardado.")
 
+    st.markdown("### Parámetros guardados en Drive")
+    st.dataframe(read_ws_as_df(PARAM_WS), use_container_width=True)
+    
+    st.markdown("### Saldos iniciales (por mes) en Drive")
+    st.dataframe(read_saldos_iniciales_df(), use_container_width=True)
+
 
 # =========================
-# TAB EGRESOS MANUALES
+# =========================
+# TAB EGRESOS MANUALES (DRIVE)
 # =========================
 with tab_egm:
-    st.header("Egresos manuales")
+    st.header("Egresos manuales (Drive)")
+
     meses_num = list(range(1, 13))
-    egm_data = cargar_egresos_manuales_json(EGRESOS_MANUALES_JSON, meses_num)
-    egm_df = egresos_manuales_a_df(egm_data, meses_num)
-    egm_edit = st.data_editor(egm_df, use_container_width=True, num_rows="fixed")
+
+    # usa tu año actual si ya lo tienes; si no, deja esto:
+    anio = st.session_state.get("ANIO", datetime.today().year)
+
+    # CARGA desde Drive -> matriz 12 meses
+    egm_df = egresos_manuales_drive_a_df(anio, meses_num, EGRESOS_MANUALES_FILAS)
+
+    egm_edit = st.data_editor(
+        egm_df,
+        use_container_width=True,
+        num_rows="fixed"
+    )
 
     if st.button("Guardar egresos manuales"):
-        new_data = {}
-        for fila in EGRESOS_MANUALES_FILAS:
-            new_data[fila] = {str(m): float(egm_edit.loc[fila, str(m)] or 0) for m in meses_num}
-        guardar_egresos_manuales_json(EGRESOS_MANUALES_JSON, new_data)
-        st.success("Guardado ✅")
+        guardar_egresos_manuales_drive(anio, egm_edit, meses_num, EGRESOS_MANUALES_FILAS)
+        st.cache_data.clear()
+        st.success("Guardado en Drive ✅")
+
+    if st.button("Guardar egresos manuales"):
+        guardar_egresos_manuales_drive(anio, egm_edit, meses_num, EGRESOS_MANUALES_FILAS)
+        st.cache_data.clear()
+        st.success("Guardado en Drive ✅")
+
+    st.markdown("### Lo que está guardado en Drive")
+    df_man = read_manuales_df()
+    st.dataframe(df_man, use_container_width=True)
 
 # =========================
 # TAB CARGA HISTÓRICO
@@ -1516,6 +1822,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
