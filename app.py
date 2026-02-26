@@ -70,17 +70,31 @@ MANUALES_WS = "Manuales"
 SALDOS_WS   = "Saldos_iniciales"
 
 
+from gspread.exceptions import APIError
+import time
+
 def _ensure_headers(ws_name: str, headers: list[str]):
     ws = _get_ws(ws_name)
-    values = ws.get_all_values()
-    if not values:
-        ws.update([headers])
-        return
-    # si la primera fila no coincide, la reponemos (suave)
-    first = values[0]
-    if [h.strip() for h in first] != headers:
-        ws.update([headers])
 
+    last_err = None
+    for attempt in range(3):
+        try:
+            first = ws.row_values(1)  # ✅ solo fila 1, NO toda la hoja
+            first = [str(x).strip() for x in first]
+
+            if not first:
+                ws.update("A1", [headers])
+                return
+
+            if [h.strip() for h in first[:len(headers)]] != headers:
+                ws.update("A1", [headers])
+            return
+
+        except APIError as e:
+            last_err = e
+            time.sleep(1.2 * (attempt + 1))
+
+    raise last_err
 
 def append_row_ws(ws_name: str, row: list):
     """Agrega una fila al final (no borra nada)."""
@@ -352,17 +366,6 @@ def _ensure_headers(ws_name: str, headers: list[str]):
     if [h.strip() for h in first] != headers:
         ws.update([headers])
 
-def read_manuales_df() -> pd.DataFrame:
-    _ensure_headers(MANUALES_WS, ["Fecha", "concepto", "tipo", "valor"])
-    df = read_ws_as_df(MANUALES_WS)
-    if df.empty:
-        return df
-
-    df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce")
-    df["concepto"] = df["concepto"].astype(str).fillna("")
-    df["tipo"] = df["tipo"].astype(str).str.upper().str.strip()
-    df["valor"] = pd.to_numeric(df["valor"], errors="coerce").fillna(0.0)
-    return df
 
 def egresos_manuales_drive_a_df(anio: int, meses_num: list[int], filas: list[str]) -> pd.DataFrame:
     """Devuelve DF ancho: index=filas, columns='1'..'12'"""
@@ -1819,6 +1822,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
