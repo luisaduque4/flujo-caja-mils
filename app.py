@@ -1393,9 +1393,11 @@ with tab_flujo:
     with colC:
         dias_default = st.number_input("Días default", value=int(dias_default_cfg), step=1, key="flujo_dias_default")
 
-    if st.button("Guardar configuración"):
-        guardar_config(int(año), float(saldo_inicial), int(dias_default))
-        st.success("Guardado ✅")
+    if st.button("Guardar configuración", key="btn_guardar_config_flujo"):
+    # ojo: aquí también guardas cxp/cxc en el otro tab, pero en este tab guardamos lo que existe aquí
+    guardar_config_drive(int(año), float(saldo_inicial), int(dias_default), float(cxp_cfg), float(cxc_cfg))
+    st.cache_data.clear()
+    st.success("Guardado en Drive ✅")
 
     modo_corte = st.selectbox("Fecha de corte para roll-forward",
                               ["A) Hoy", "B) Fin del año", "C) Elegir fecha"], index=0)
@@ -1410,8 +1412,7 @@ with tab_flujo:
     meses_num = list(range(1, 13))
 
     # -------- egresos manuales --------
-    egm_data = cargar_egresos_manuales_json(EGRESOS_MANUALES_JSON, meses_num)
-    egm_df = egresos_manuales_a_df(egm_data, meses_num)
+    egm_df = egresos_manuales_drive_a_df(int(año), meses_num, EGRESOS_MANUALES_FILAS)
 
     # -------- cargar historicos --------
     dfv = limpiar_hist_df(read_ws_as_df("ventas_historico"))
@@ -1700,7 +1701,7 @@ with tab_flujo:
     # =========================
     # PRESUPUESTO
     # =========================
-    pres_data = cargar_presupuesto_json(PRESUPUESTO_JSON, meses_num)
+    pres_data = cargar_presupuesto_drive(meses_num)
     ingresos_pres, egresos_pres = presupuesto_a_series(pres_data, meses_num)
     st.write("DEBUG egresos_pres abril:", float(egresos_pres.get(4, 0.0)))
     saldo_ini_enero = float(pres_data.get("saldo_ini_enero", 0.0))
@@ -1818,6 +1819,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
