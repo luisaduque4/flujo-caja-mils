@@ -1209,12 +1209,12 @@ with tab_egm:
         num_rows="fixed"
     )
 
-    if st.button("Guardar egresos manuales"):
+    if st.button("Guardar egresos manuales", key="btn_guardar_egm_drive"):
         guardar_egresos_manuales_drive(anio, egm_edit, meses_num, EGRESOS_MANUALES_FILAS)
         st.cache_data.clear()
         st.success("Guardado en Drive ✅")
 
-    if st.button("Guardar egresos manuales"):
+    if st.button("Guardar egresos manuales", key="btn_guardar_egm_drive"):
         guardar_egresos_manuales_drive(anio, egm_edit, meses_num, EGRESOS_MANUALES_FILAS)
         st.cache_data.clear()
         st.success("Guardado en Drive ✅")
@@ -1822,6 +1822,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
