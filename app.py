@@ -1599,17 +1599,32 @@ with tab_flujo:
                 base_ing[m] = 0.0
         base_ing[mes_corte] += vencido
 
-        # ---------- neteo en mes_corte (lo que entra real reduce lo que falta por cobrar este mes) ----------
+       # ✅ NETEO CON ARRASTRE DE PAGOS (RC) A MESES FUTUROS
+        ingresos_proy_neto = pd.Series(0.0, index=meses_num)
+        
+        bolsa_pagos = 0.0  # pagos reales acumulados que "sobran" y siguen pagando meses futuros
+        
+        for m in meses_num:
+            # solo usamos pagos reales hasta el mes_corte (porque después no han pasado)
+            if m <= mes_corte:
+                bolsa_pagos += float(ingresos_reales.get(m, 0.0))
+        
+            # lo que "debería entrar" por vencimientos ese mes
+            venc = float(base_ing.get(m, 0.0))
+        
+            # la bolsa de pagos cubre vencimientos
+            neto = max(0.0, venc - bolsa_pagos)
+            ingresos_proy_neto[m] = neto
+        
+            # consumimos la bolsa pagando vencimientos
+            bolsa_pagos = max(0.0, bolsa_pagos - venc)
+        
+        # si quieres seguir ocultando meses anteriores al corte:
         for m in meses_num:
             if m < mes_corte:
                 ingresos_proy_neto[m] = 0.0
-            elif m == mes_corte:
-                ingresos_proy_neto[m] = max(0.0, float(base_ing[m]) - float(ingresos_reales.get(m, 0.0)))
-            else:
-                ingresos_proy_neto[m] = float(base_ing[m])
-
-        
-        
+                
+                
 
 
     # =========================
@@ -1877,6 +1892,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
