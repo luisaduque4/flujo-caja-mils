@@ -1726,25 +1726,29 @@ with tab_flujo:
         if not pagos_rp.empty:
             egresos_reales = pagos_rp.groupby(pagos_rp["Fecha"].dt.month)["Valor"].sum().reindex(meses_num, fill_value=0.0)
 
-        # Proyectados (vencimiento con días proveedor)
-        tabla_prov = cargar_tabla(TABLA_PROVEEDORES_PATH, ["Proveedor", "Dias_pago"])
+        # ✅ Tabla proveedores desde DRIVE (Google Sheets)
+        tabla_prov = read_tabla_drive(PROVEEDORES_WS, ["Proveedor", "Dias_pago"])
         mapa_dias = {}
+        
         if not tabla_prov.empty:
-            tabla_prov["_p"] = tabla_prov["Proveedor"].astype(str).apply(normalizar_texto).str.upper().str.strip()
-            tabla_prov["Dias_pago"] = pd.to_numeric(tabla_prov["Dias_pago"], errors="coerce").fillna(int(dias_default)).astype(int)
+            tabla_prov["_p"] = (
+                tabla_prov["Proveedor"].astype(str)
+                .apply(normalizar_texto)
+                .str.upper()
+                .str.strip()
+            )
+            tabla_prov["Dias_pago"] = (
+                pd.to_numeric(tabla_prov["Dias_pago"], errors="coerce")
+                .fillna(int(dias_default))
+                .astype(int)
+            )
             mapa_dias = dict(zip(tabla_prov["_p"], tabla_prov["Dias_pago"]))
-
+                
         if not docs.empty:
             # ✅ PASO C3: usar la misma llave que guardamos en TAB PROVEEDORES
             if "Proveedor_key" not in docs.columns:
                 docs["Proveedor_key"] = docs["Tercero"].astype(str).apply(normalizar_texto).str.upper().str.strip()
 
-            tabla_prov = cargar_tabla(TABLA_PROVEEDORES_PATH, ["Proveedor", "Dias_pago"])
-            mapa_dias = {}
-            if not tabla_prov.empty:
-                tabla_prov["_p"] = tabla_prov["Proveedor"].astype(str).apply(normalizar_texto).str.upper().str.strip()
-                tabla_prov["Dias_pago"] = pd.to_numeric(tabla_prov["Dias_pago"], errors="coerce").fillna(int(dias_default)).astype(int)
-                mapa_dias = dict(zip(tabla_prov["_p"], tabla_prov["Dias_pago"]))
 
             docs["_p"] = docs["Proveedor_key"].astype(str).apply(normalizar_texto).str.upper().str.strip()
             docs["dias_pago"] = docs["_p"].map(mapa_dias).fillna(int(dias_default)).astype(int)
@@ -1913,6 +1917,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
