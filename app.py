@@ -1769,7 +1769,28 @@ with tab_flujo:
 
             base[mes_corte] += float(cxp_cfg)
 
-            egresos_proy = (base - egresos_reales).clip(lower=0.0)
+    # ✅ NETEO CORRECTO: los pagos reales (RP) pagan la proyección (base)
+    egresos_proy = pd.Series(0.0, index=meses_num)
+    
+    bolsa_pagos = 0.0  # pagos reales acumulados disponibles
+    
+    for m in meses_num:
+        # solo conocemos pagos reales hasta el mes_corte
+        if m <= mes_corte:
+            bolsa_pagos += float(egresos_reales.get(m, 0.0))
+    
+        venc = float(base.get(m, 0.0))  # lo que "debería salir" por vencimiento
+    
+        # lo pendiente del mes después de aplicar pagos disponibles
+        egresos_proy[m] = max(0.0, venc - bolsa_pagos)
+    
+        # consumir pagos cubriendo este vencimiento
+        bolsa_pagos = max(0.0, bolsa_pagos - venc)
+    
+    # si no quieres mostrar proyección en meses anteriores al corte
+    for m in meses_num:
+        if m < mes_corte:
+            egresos_proy[m] = 0.0       
 
     # =========================
     # PRESUPUESTO
@@ -1892,6 +1913,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
