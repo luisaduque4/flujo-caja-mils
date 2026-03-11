@@ -1475,18 +1475,18 @@ with tab_flujo:
     # -------- cargar historicos --------
     dfv = limpiar_hist_df(read_ws_as_df("ventas_historico"))
     
-    # eliminar duplicados en ventas
+    # eliminar duplicados en ventas (RC, FV, NC, ND...)
     if "Comprobante" in dfv.columns:
-        dfv = dfv.drop_duplicates(subset=["Comprobante"], keep="last")
+        cols_dup_v = [c for c in ["Comprobante", "Fecha", "Valor"] if c in dfv.columns]
+        dfv = dfv.drop_duplicates(subset=cols_dup_v, keep="last")
     
     dfe = limpiar_hist_df(read_ws_as_df("egresos_historico"))
     
     # eliminar duplicados en egresos
     if "Comprobante" in dfe.columns:
-        dfe = dfe.drop_duplicates(subset=["Comprobante"], keep="last")
+        cols_dup_e = [c for c in ["Comprobante", "Fecha", "Valor"] if c in dfe.columns]
+        dfe = dfe.drop_duplicates(subset=cols_dup_e, keep="last")
 
-    # =========================
-   # =========================
 # =========================
 # INGRESOS = RC reales + FV proyectadas (por días) con roll-forward y neteo
 # =========================
@@ -1926,6 +1926,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
