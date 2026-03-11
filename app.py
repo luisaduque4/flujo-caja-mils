@@ -1473,8 +1473,17 @@ with tab_flujo:
     egm_df = egresos_manuales_drive_a_df(int(año), meses_num, EGRESOS_MANUALES_FILAS)
 
     # -------- cargar historicos --------
-    _df(read_ws_as_df("ventas_historico"))
+    dfv = limpiar_hist_df(read_ws_as_df("ventas_historico"))
+    
+    # eliminar duplicados en ventas
+    if "Comprobante" in dfv.columns:
+        dfv = dfv.drop_duplicates(subset=["Comprobante"], keep="last")
+    
     dfe = limpiar_hist_df(read_ws_as_df("egresos_historico"))
+    
+    # eliminar duplicados en egresos
+    if "Comprobante" in dfe.columns:
+        dfe = dfe.drop_duplicates(subset=["Comprobante"], keep="last")
 
     # =========================
    # =========================
@@ -1917,6 +1926,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
