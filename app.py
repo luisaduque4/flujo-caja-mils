@@ -1473,7 +1473,7 @@ with tab_flujo:
     egm_df = egresos_manuales_drive_a_df(int(año), meses_num, EGRESOS_MANUALES_FILAS)
 
     # -------- cargar historicos --------
-    dfv = limpiar_hist_df(read_ws_as_df("ventas_historico"))
+    _df(read_ws_as_df("ventas_historico"))
     dfe = limpiar_hist_df(read_ws_as_df("egresos_historico"))
 
     # =========================
@@ -1917,6 +1917,7 @@ with tab_flujo:
         st.write("Egresos histórico filas:", len(dfe))
         st.write("Suma egresos reales:", float(egresos_reales.sum()))
         st.write("Suma egresos proyectados:", float(egresos_proy.sum()))
+
 
 
 
