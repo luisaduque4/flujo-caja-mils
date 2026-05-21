@@ -44,6 +44,12 @@ def _open_sheet():
     return gc.open_by_key(sheet_id)
 
 @st.cache_resource
+def open_seguimiento_sheet():
+    sheet_id = st.secrets["SEGUIMIENTO_SHEET_ID"]
+    gc = _gs_client()
+    return gc.open_by_key(sheet_id)
+
+@st.cache_resource
 def _get_ws(ws_name: str):
     sh = _open_sheet()
     return sh.worksheet(ws_name)   # ✅ queda cacheado por nombre
