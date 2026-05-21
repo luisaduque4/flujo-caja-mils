@@ -87,6 +87,73 @@ def read_ws_seguimiento_as_df(ws_name: str) -> pd.DataFrame:
 
     rows = values[1:] if len(values) > 1 else []
     return pd.DataFrame(rows, columns=headers)
+
+def sincronizar_seguimiento_entregas():
+    # 1. Leer ventas histórico
+    ventas = read_ws_as_df("ventas_historico")
+
+    if ventas.empty:
+        st.warning("No hay ventas históricas para sincronizar.")
+        return
+
+    # 2. Filtrar solo FV y RM
+    ventas["Tipo"] = ventas["Tipo"].astype(str).str.upper().str.strip()
+    docs = ventas[ventas["Tipo"].isin(["FV", "RM"])].copy()
+
+    if docs.empty:
+        st.info("No encontré documentos FV ni RM.")
+        return
+
+    # 3. Crear columna Documento
+    docs["Documento"] = docs["Tipo"].astype(str) + "-" + docs["Comprobante"].astype(str)
+
+    # 4. Quedarnos solo con columnas automáticas
+    columnas_auto = ["Fecha", "Documento", "Cliente", "Ciudad", "Valor"]
+    for col in columnas_auto:
+        if col not in docs.columns:
+            docs[col] = ""
+
+    docs = docs[columnas_auto].copy()
+
+    # 5. Leer seguimiento actual
+    seguimiento = read_ws_seguimiento_as_df("seguimiento_entregas")
+
+    if seguimiento.empty:
+        documentos_existentes = set()
+    else:
+        documentos_existentes = set(
+            seguimiento["Documento"].astype(str).str.strip()
+        )
+
+    # 6. Dejar solo documentos nuevos
+    nuevos = docs[
+        ~docs["Documento"].astype(str).str.strip().isin(documentos_existentes)
+    ].copy()
+
+    if nuevos.empty:
+        st.success("No hay documentos nuevos por agregar.")
+        return
+
+    # 7. Agregar columnas manuales vacías
+    columnas_manuales = [
+        "Estado",
+        "Transportadora",
+        "Guia",
+        "Fecha_envio",
+        "Confirmacion",
+        "Observaciones",
+    ]
+
+    for col in columnas_manuales:
+        nuevos[col] = ""
+
+    # 8. Escribir al Google Sheet de seguimiento
+    ws = _get_ws_seguimiento("seguimiento_entregas")
+    ws.append_rows(nuevos.values.tolist(), value_input_option="USER_ENTERED")
+
+    st.success(f"Se agregaron {len(nuevos)} documentos nuevos a Seguimiento Entregas.")
+
+
 # =========================
 # MANUALES + SALDOS INICIALES (GOOGLE SHEETS)
 # =========================
@@ -200,7 +267,14 @@ def append_df_to_ws(df: pd.DataFrame, ws_name: str):
 
     df2 = df2[headers]
     ws.append_rows(df2.values.tolist(), value_input_option="RAW")
-
+        # =========================
+    # SINCRONIZAR SEGUIMIENTO ENTREGAS
+    # =========================
+    if ws_name == "ventas_historico":
+        try:
+            sincronizar_seguimiento_entregas()
+        except Exception as e:
+            st.warning(f"Error sincronizando seguimiento entregas: {e}")
     
 def construir_df_historico(uploaded_file, raw_name: str, h: str) -> pd.DataFrame:
     df_new = leer_siigo_excel(uploaded_file)
