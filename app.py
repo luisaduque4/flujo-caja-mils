@@ -89,52 +89,59 @@ def read_ws_seguimiento_as_df(ws_name: str) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=headers)
 
 def sincronizar_seguimiento_entregas():
-    # 1. Leer ventas histórico
     ventas = read_ws_as_df("ventas_historico")
 
     if ventas.empty:
         st.warning("No hay ventas históricas para sincronizar.")
         return
 
-    # 2. Filtrar solo FV y RM
-    ventas["Tipo"] = ventas["Tipo"].astype(str).str.upper().str.strip()
-    docs = ventas[ventas["Tipo"].isin(["FV", "RM"])].copy()
-
-    if docs.empty:
-        st.info("No encontré documentos FV ni RM.")
+    if "Tipo" not in ventas.columns or "Comprobante" not in ventas.columns:
+        st.warning("No encontré las columnas Tipo y/o Comprobante en ventas_historico.")
         return
 
-    # 3. Crear columna Documento
-    docs["Documento"] = docs["Tipo"].astype(str) + "-" + docs["Comprobante"].astype(str)
+    tipo_txt = ventas["Tipo"].astype(str).str.upper().str.strip()
+    comprobante_txt = ventas["Comprobante"].astype(str).str.upper().str.strip()
 
-    # 4. Quedarnos solo con columnas automáticas
+    docs = ventas[
+        tipo_txt.str.contains("Factura", na=False) |
+        tipo_txt.str.contains("Remisión", na=False) |
+        comprobante_txt.str.startswith("FV") |
+        comprobante_txt.str.startswith("RM")
+    ].copy()
+
+    if docs.empty:
+        st.info("No encontré facturas ni remisiones para seguimiento.")
+        return
+
+    docs["Documento"] = docs["Comprobante"].astype(str).str.strip()
+
     columnas_auto = ["Fecha", "Documento", "Cliente", "Ciudad", "Valor"]
+
     for col in columnas_auto:
         if col not in docs.columns:
             docs[col] = ""
 
     docs = docs[columnas_auto].copy()
+    docs = docs.drop_duplicates(subset=["Documento"])
+    docs = docs.fillna("")
 
-    # 5. Leer seguimiento actual
     seguimiento = read_ws_seguimiento_as_df("seguimiento_entregas")
 
-    if seguimiento.empty:
+    if seguimiento.empty or "Documento" not in seguimiento.columns:
         documentos_existentes = set()
     else:
         documentos_existentes = set(
             seguimiento["Documento"].astype(str).str.strip()
         )
 
-    # 6. Dejar solo documentos nuevos
     nuevos = docs[
         ~docs["Documento"].astype(str).str.strip().isin(documentos_existentes)
     ].copy()
 
     if nuevos.empty:
-        st.success("No hay documentos nuevos por agregar.")
+        st.success("No hay documentos nuevos por agregar a Seguimiento Entregas.")
         return
 
-    # 7. Agregar columnas manuales vacías
     columnas_manuales = [
         "Estado",
         "Transportadora",
@@ -147,7 +154,6 @@ def sincronizar_seguimiento_entregas():
     for col in columnas_manuales:
         nuevos[col] = ""
 
-    # 8. Escribir al Google Sheet de seguimiento
     ws = _get_ws_seguimiento("seguimiento_entregas")
     ws.append_rows(nuevos.values.tolist(), value_input_option="USER_ENTERED")
 
