@@ -115,7 +115,7 @@ def sincronizar_seguimiento_entregas():
 
     docs["Documento"] = docs["Comprobante"].astype(str).str.strip()
 
-    columnas_auto = ["Fecha", "Documento", "Cliente", "Ciudad", "Valor"]
+    columnas_auto = ["Fecha", "Documento", "Tercero", "Valor"]
 
     for col in columnas_auto:
         if col not in docs.columns:
