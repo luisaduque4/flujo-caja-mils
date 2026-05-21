@@ -54,9 +54,28 @@ def _get_ws(ws_name: str):
     sh = _open_sheet()
     return sh.worksheet(ws_name)   # ✅ queda cacheado por nombre
 
+@st.cache_resource
+def _get_ws_seguimiento(ws_name: str):
+    sh = open_seguimiento_sheet()
+    return sh.worksheet(ws_name)
+
 @st.cache_data(ttl=30)
 def read_ws_as_df(ws_name: str) -> pd.DataFrame:
     ws = _get_ws(ws_name)
+    values = ws.get_all_values()
+
+    if not values:
+        return pd.DataFrame()
+
+    headers = values[0]
+    headers = [str(h).replace("\xa0", " ").replace("\ufeff", "").strip() for h in headers]
+    headers = make_unique_columns(headers)
+
+    rows = values[1:] if len(values) > 1 else []
+    return pd.DataFrame(rows, columns=headers)
+
+def read_ws_seguimiento_as_df(ws_name: str) -> pd.DataFrame:
+    ws = _get_ws_seguimiento(ws_name)
     values = ws.get_all_values()
 
     if not values:
