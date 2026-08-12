@@ -614,21 +614,80 @@ def guardar_config_drive(año_new: int, saldo_new: float, dias_new: int, cxp_ini
     upsert_parametro("dias_default", dias_new)
     upsert_parametro("cxp_ini_bolsa", cxp_ini_new)
     upsert_parametro("cxc_ini_bolsa", cxc_ini_new)
-def cargar_ajuste_cxp_manual() -> float:
+
+# =========================
+# SALDO REAL BASE CXP
+# =========================
+CXP_REAL_KEY = "cxp_real_json"
+
+
+def cargar_cxp_real() -> dict:
     p = read_parametros()
+    raw = p.get(CXP_REAL_KEY, "")
+
+    base = {
+        "activo": False,
+        "saldo_base": 0.0,
+        "fecha_base": "",
+        "rp_existentes_base": [],
+        "rp_reduce_base": [],
+    }
+
+    if not raw:
+        return base
 
     try:
-        return float(
-            str(p.get("ajuste_cxp_manual", 0))
-            .replace(",", "")
-            .strip()
-        )
-    except:
-        return 0.0
-        
-def guardar_ajuste_cxp_manual(valor: float):
-    upsert_parametro("ajuste_cxp_manual", float(valor))
+        data = json.loads(raw)
 
+        base["activo"] = bool(
+            data.get("activo", False)
+        )
+
+        base["saldo_base"] = float(
+            data.get("saldo_base", 0.0) or 0.0
+        )
+
+        base["fecha_base"] = str(
+            data.get("fecha_base", "")
+        )
+
+        base["rp_existentes_base"] = list(
+            data.get("rp_existentes_base", [])
+        )
+
+        base["rp_reduce_base"] = list(
+            data.get("rp_reduce_base", [])
+        )
+
+        return base
+
+    except:
+        return base
+
+
+def guardar_cxp_real(
+    saldo_base: float,
+    rp_existentes_base: list,
+    rp_reduce_base: list
+):
+    data = {
+        "activo": True,
+        "saldo_base": float(saldo_base),
+        "fecha_base": datetime.now().strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
+        "rp_existentes_base": list(
+            rp_existentes_base
+        ),
+        "rp_reduce_base": list(
+            rp_reduce_base
+        ),
+    }
+
+    upsert_parametro(
+        CXP_REAL_KEY,
+        json.dumps(data, ensure_ascii=False)
+    )
 # =========================
 # PROGRAMACIÓN PORCENTUAL CXP
 # =========================
@@ -1827,39 +1886,7 @@ with tab_flujo:
     mes_corte = int(fecha_corte.month)
     meses_num = list(range(1, 13))
         # =========================
-    # AJUSTE MANUAL CXP
-    # =========================
-    ajuste_cxp_manual = cargar_ajuste_cxp_manual()
-
-    with st.expander("💰 Ajuste manual de la bolsa CxP", expanded=False):
-
-        st.caption(
-            "Usa este valor para corregir la bolsa calculada por el sistema. "
-            "Ejemplo: si el sistema calcula $300 millones y realmente debes "
-            "$350 millones, escribe +50.000.000. "
-            "También puedes usar valores negativos."
-        )
-
-        with st.form("form_ajuste_cxp_manual"):
-
-            ajuste_cxp_edit = st.number_input(
-                "Ajuste manual CxP",
-                value=float(ajuste_cxp_manual),
-                step=1000000.0,
-                format="%.0f"
-            )
-
-            guardar_ajuste = st.form_submit_button(
-                "Guardar ajuste CxP"
-            )
-
-        if guardar_ajuste:
-            guardar_ajuste_cxp_manual(float(ajuste_cxp_edit))
-            read_ws_as_df.clear()
-            st.cache_data.clear()
-            st.success("✅ Ajuste de CxP guardado.")
-            st.rerun()
-
+    
    
     
     # -------- egresos manuales --------
@@ -2122,6 +2149,16 @@ with tab_flujo:
                 # =========================
         # CLASIFICAR RP: cuáles reducen CxP
         # =========================
+        pagos_cxp = pd.Series(
+            0.0,
+            index=meses_num
+        )
+
+        rp_cxp = pd.DataFrame()
+
+                # =========================
+        # CLASIFICAR RP: cuáles reducen CxP
+        # =========================
         pagos_cxp = pd.Series(0.0, index=meses_num)
 
         if not pagos_rp.empty:
@@ -2300,6 +2337,55 @@ with tab_flujo:
 
             base[mes_corte] += float(cxp_cfg)
 
+        # =========================
+    # FOTO BASE DE CXP
+    # =========================
+    cxp_real_data = cargar_cxp_real()
+
+    pagos_cxp_para_neteo = pagos_cxp.copy()
+
+    # Si ya fijamos una bolsa real,
+    # los RP posteriores NO vuelven a tocar
+    # la reconstrucción histórica.
+    if cxp_real_data.get("activo", False):
+
+        rp_reduce_base = set(
+            cxp_real_data.get(
+                "rp_reduce_base",
+                []
+            )
+        )
+
+        if not rp_cxp.empty:
+
+            rp_antiguos_reduce = rp_cxp[
+                rp_cxp["RP_key"].isin(
+                    rp_reduce_base
+                )
+            ].copy()
+
+            if not rp_antiguos_reduce.empty:
+
+                pagos_cxp_para_neteo = (
+                    rp_antiguos_reduce
+                    .groupby(
+                        rp_antiguos_reduce[
+                            "Fecha"
+                        ].dt.month
+                    )["Valor"]
+                    .sum()
+                    .reindex(
+                        meses_num,
+                        fill_value=0.0
+                    )
+                )
+
+            else:
+                pagos_cxp_para_neteo = pd.Series(
+                    0.0,
+                    index=meses_num
+                )
+    
     # ✅ NETEO CORRECTO: los pagos reales (RP) pagan la proyección (base)
     egresos_proy = pd.Series(0.0, index=meses_num)
     
@@ -2308,7 +2394,7 @@ with tab_flujo:
     for m in meses_num:
         # solo conocemos pagos reales hasta el mes_corte
         if m <= mes_corte:
-            bolsa_pagos += float(pagos_cxp.get(m, 0.0))
+            bolsa_pagos += float(pagos_cxp_para_neteo.get(m, 0.0)
     
         venc = float(base.get(m, 0.0))  # lo que "debería salir" por vencimiento
     
@@ -2326,224 +2412,183 @@ with tab_flujo:
     # APLICAR AJUSTE MANUAL CXP
     # =========================
         # =========================
-    # SEPARAR BOLSA CXP DE FACTURAS FUTURAS
+        # =========================
+    # BOLSA REAL CXP
     # =========================
 
-    # Guardamos la proyección normal
+    # Guardamos proyección normal:
+    # facturas que todavía siguen su calendario.
     egresos_proy_natural = egresos_proy.copy()
 
-    # La bolsa que queremos programar es la que cayó al mes de corte
-    bolsa_cxp_antes_ajuste = float(
-        egresos_proy_natural.get(mes_corte, 0.0)
-    )
-
-    # Quitamos esa bolsa del flujo natural,
-    # porque después la vamos a repartir por porcentajes
+    # Quitamos del mes actual la bolsa vieja reconstruida.
+    # La reemplazaremos por nuestra bolsa real.
     egresos_proy_natural[mes_corte] = 0.0
 
-    # Aplicar corrección manual solamente a la bolsa
-    bolsa_cxp_ajustada = max(
-        0.0,
-        bolsa_cxp_antes_ajuste
-        + float(ajuste_cxp_manual)
+
+    # =========================
+    # CALCULAR RP NUEVOS
+    # =========================
+    cxp_real_data = cargar_cxp_real()
+
+    rp_nuevos_valor = 0.0
+
+    if cxp_real_data.get("activo", False):
+
+        rp_existentes_base = set(
+            cxp_real_data.get(
+                "rp_existentes_base",
+                []
+            )
+        )
+
+        if not rp_cxp.empty:
+
+            rp_nuevos = rp_cxp[
+                ~rp_cxp["RP_key"].isin(
+                    rp_existentes_base
+                )
+            ].copy()
+
+            rp_nuevos_valor = float(
+                rp_nuevos["Valor"].sum()
+            )
+
+        saldo_base_cxp = float(
+            cxp_real_data.get(
+                "saldo_base",
+                0.0
+            )
+        )
+
+        bolsa_cxp_ajustada = max(
+            0.0,
+            saldo_base_cxp
+            - rp_nuevos_valor
+        )
+
+    else:
+        # Mientras no hayas establecido
+        # saldo real, usamos lo calculado.
+        saldo_base_cxp = float(
+            egresos_proy.get(
+                mes_corte,
+                0.0
+            )
+        )
+
+        bolsa_cxp_ajustada = (
+            saldo_base_cxp
+        )
+
+
+    # Sin programación porcentual,
+    # la bolsa completa cae al mes actual.
+    egresos_proy = (
+        egresos_proy_natural.copy()
     )
 
-    # Si NO usamos programación porcentual,
-    # la bolsa sigue apareciendo completa en el mes de corte
-    egresos_proy = egresos_proy_natural.copy()
-    egresos_proy[mes_corte] += bolsa_cxp_ajustada
+    egresos_proy[mes_corte] += (
+        bolsa_cxp_ajustada
+    )
+
+
+    # =========================
+    # MOSTRAR / ACTUALIZAR BOLSA
+    # =========================
     st.markdown("### Bolsa CxP")
 
     c1, c2, c3 = st.columns(3)
 
     with c1:
         st.metric(
-            "CxP calculada",
-            f"${bolsa_cxp_antes_ajuste:,.0f}"
+            "Saldo base registrado",
+            f"${saldo_base_cxp:,.0f}"
         )
 
     with c2:
         st.metric(
-            "Ajuste manual",
-            f"${ajuste_cxp_manual:,.0f}"
+            "RP nuevos que reducen CxP",
+            f"-${rp_nuevos_valor:,.0f}"
         )
 
     with c3:
         st.metric(
-            "CxP ajustada",
+            "Bolsa CxP actual",
             f"${bolsa_cxp_ajustada:,.0f}"
         )
 
-        # =========================
-        # =========================
-    # PROGRAMAR BOLSA CXP POR MES - 36 MESES
-    # =========================
-    nombres_meses = {
-        1: "Enero",
-        2: "Febrero",
-        3: "Marzo",
-        4: "Abril",
-        5: "Mayo",
-        6: "Junio",
-        7: "Julio",
-        8: "Agosto",
-        9: "Septiembre",
-        10: "Octubre",
-        11: "Noviembre",
-        12: "Diciembre",
-    }
-
-    # La nueva función ya NO recibe año ni meses_num
-    prog_cxp = cargar_programacion_cxp()
-
-    # Crear horizonte de 36 meses desde el mes de corte
-    inicio_prog = pd.Timestamp(
-        int(año),
-        int(mes_corte),
-        1
-    )
-
-    fechas_programables = [
-        inicio_prog + pd.DateOffset(months=i)
-        for i in range(HORIZONTE_CXP_MESES)
-    ]
-
-    meses_programables = []
-
-    for fecha_prog in fechas_programables:
-        key_mes = f"{fecha_prog.year:04d}-{fecha_prog.month:02d}"
-
-        meses_programables.append({
-            "key": key_mes,
-            "fecha": fecha_prog,
-            "nombre": (
-                f"{nombres_meses[fecha_prog.month]} "
-                f"{fecha_prog.year}"
-            )
-        })
-
-    # Tabla que verá el usuario
-    prog_df = pd.DataFrame({
-        "Mes_key": [
-            x["key"]
-            for x in meses_programables
-        ],
-
-        "Mes": [
-            x["nombre"]
-            for x in meses_programables
-        ],
-
-        "Porcentaje": [
-            float(
-                prog_cxp["porcentajes"].get(
-                    x["key"],
-                    0.0
-                )
-            )
-            for x in meses_programables
-        ],
-    })
 
     with st.expander(
-        "📅 Programar pago de la bolsa CxP",
+        "💰 Registrar saldo real actual de CxP",
         expanded=False
     ):
 
         st.caption(
-            "Distribuye la bolsa CxP ajustada hasta en 36 meses. "
-            "Puedes repartirla entre varios años. "
-            "Los porcentajes deben sumar exactamente 100%."
+            "Escribe directamente cuánto debes hoy. "
+            "Todo RP que ya exista quedará incluido "
+            "en este saldo. Desde ese momento, solo "
+            "los RP nuevos marcados como Reduce CxP "
+            "disminuirán la bolsa."
         )
 
-        with st.form("form_programacion_cxp"):
+        with st.form(
+            "form_saldo_real_cxp"
+        ):
 
-            prog_activa_edit = st.checkbox(
-                "Usar programación porcentual",
-                value=bool(
-                    prog_cxp.get("activo", False)
+            saldo_real_edit = st.number_input(
+                "Saldo real actual CxP",
+                value=float(
+                    bolsa_cxp_ajustada
+                ),
+                min_value=0.0,
+                step=1000000.0,
+                format="%.0f"
+            )
+
+            guardar_saldo_real = (
+                st.form_submit_button(
+                    "Guardar nuevo saldo CxP"
                 )
             )
 
-            prog_edit = st.data_editor(
-                prog_df,
-                use_container_width=True,
-                hide_index=True,
-                num_rows="fixed",
-                column_config={
-                    "Mes_key": None,
+        if guardar_saldo_real:
 
-                    "Mes": st.column_config.TextColumn(
-                        "Mes",
-                        disabled=True
-                    ),
-
-                    "Porcentaje": st.column_config.NumberColumn(
-                        "% de la bolsa",
-                        min_value=0.0,
-                        max_value=100.0,
-                        step=1.0,
-                        format="%.1f %%"
-                    ),
-                }
-            )
-
-            guardar_prog = st.form_submit_button(
-                "Guardar programación CxP"
-            )
-
-        if guardar_prog:
-
-            suma_pct = float(
-                pd.to_numeric(
-                    prog_edit["Porcentaje"],
-                    errors="coerce"
+            # Todos los RP que existen AHORA
+            # quedan incluidos en la foto.
+            if not pagos_rp.empty:
+                rp_existentes_hoy = (
+                    pagos_rp["RP_key"]
+                    .astype(str)
+                    .tolist()
                 )
-                .fillna(0.0)
-                .sum()
-            )
-
-            if (
-                prog_activa_edit
-                and abs(suma_pct - 100.0) > 0.01
-            ):
-                st.error(
-                    f"❌ Los porcentajes suman "
-                    f"{suma_pct:.1f}%. "
-                    f"Deben sumar 100%."
-                )
-
             else:
-                porcentajes_guardar = {}
+                rp_existentes_hoy = []
 
-                for _, r in prog_edit.iterrows():
-
-                    key_mes = str(r["Mes_key"])
-
-                    pct = pd.to_numeric(
-                        r["Porcentaje"],
-                        errors="coerce"
-                    )
-
-                    if pd.isna(pct):
-                        pct = 0.0
-
-                    porcentajes_guardar[key_mes] = float(pct)
-
-                guardar_programacion_cxp(
-                    bool(prog_activa_edit),
-                    porcentajes_guardar
+            # Guardamos además cuáles de esos
+            # reducían CxP en este momento.
+            if not rp_cxp.empty:
+                rp_reduce_hoy = (
+                    rp_cxp["RP_key"]
+                    .astype(str)
+                    .tolist()
                 )
+            else:
+                rp_reduce_hoy = []
 
-                read_ws_as_df.clear()
-                st.cache_data.clear()
+            guardar_cxp_real(
+                float(saldo_real_edit),
+                rp_existentes_hoy,
+                rp_reduce_hoy
+            )
 
-                st.success(
-                    "✅ Programación CxP guardada."
-                )
+            read_ws_as_df.clear()
+            st.cache_data.clear()
 
-                st.rerun()
+            st.success(
+                "✅ Nuevo saldo real de CxP guardado."
+            )
 
+            st.rerun()
     # =========================
     # APLICAR PROGRAMACIÓN CXP
     # =========================
