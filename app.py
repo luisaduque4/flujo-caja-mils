@@ -627,7 +627,7 @@ def cargar_ajuste_cxp_manual() -> float:
         return 0.0
 
 
-def guardar_ajuste_cxp_manual(valor: float):
+def _manual(valor: float):
     upsert_parametro("ajuste_cxp_manual", float(valor))
 import json
 
