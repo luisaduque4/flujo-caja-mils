@@ -632,17 +632,20 @@ def guardar_ajuste_cxp_manual(valor: float):
 # =========================
 # PROGRAMACIÓN PORCENTUAL CXP
 # =========================
+# =========================
+# PROGRAMACIÓN PORCENTUAL CXP - LARGO PLAZO
+# =========================
 PROGRAMACION_CXP_KEY = "programacion_cxp_json"
+HORIZONTE_CXP_MESES = 36
 
 
-def cargar_programacion_cxp(anio: int, meses_num: list[int]) -> dict:
+def cargar_programacion_cxp() -> dict:
     p = read_parametros()
     raw = p.get(PROGRAMACION_CXP_KEY, "")
 
     base = {
-        "anio": int(anio),
         "activo": False,
-        "porcentajes": {str(m): 0.0 for m in meses_num},
+        "porcentajes": {},
     }
 
     if not raw:
@@ -651,19 +654,19 @@ def cargar_programacion_cxp(anio: int, meses_num: list[int]) -> dict:
     try:
         data = json.loads(raw)
 
-        # Si la programación guardada es de otro año,
-        # empezamos limpia.
-        if int(data.get("anio", anio)) != int(anio):
-            return base
+        base["activo"] = bool(
+            data.get("activo", False)
+        )
 
-        base["activo"] = bool(data.get("activo", False))
+        porcentajes = data.get(
+            "porcentajes",
+            {}
+        )
 
-        porcentajes = data.get("porcentajes", {})
-
-        for m in meses_num:
-            base["porcentajes"][str(m)] = float(
-                porcentajes.get(str(m), 0.0) or 0.0
-            )
+        base["porcentajes"] = {
+            str(k): float(v or 0.0)
+            for k, v in porcentajes.items()
+        }
 
         return base
 
@@ -672,12 +675,10 @@ def cargar_programacion_cxp(anio: int, meses_num: list[int]) -> dict:
 
 
 def guardar_programacion_cxp(
-    anio: int,
     activo: bool,
     porcentajes: dict
 ):
     data = {
-        "anio": int(anio),
         "activo": bool(activo),
         "porcentajes": {
             str(k): float(v or 0.0)
@@ -687,7 +688,10 @@ def guardar_programacion_cxp(
 
     upsert_parametro(
         PROGRAMACION_CXP_KEY,
-        json.dumps(data, ensure_ascii=False)
+        json.dumps(
+            data,
+            ensure_ascii=False
+        )
     )
     
 
