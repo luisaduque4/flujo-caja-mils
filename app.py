@@ -614,7 +614,21 @@ def guardar_config_drive(año_new: int, saldo_new: float, dias_new: int, cxp_ini
     upsert_parametro("dias_default", dias_new)
     upsert_parametro("cxp_ini_bolsa", cxp_ini_new)
     upsert_parametro("cxc_ini_bolsa", cxc_ini_new)
+def cargar_ajuste_cxp_manual() -> float:
+    p = read_parametros()
 
+    try:
+        return float(
+            str(p.get("ajuste_cxp_manual", 0))
+            .replace(",", "")
+            .strip()
+        )
+    except:
+        return 0.0
+
+
+def guardar_ajuste_cxp_manual(valor: float):
+    upsert_parametro("ajuste_cxp_manual", float(valor))
 import json
 
 PRESUPUESTO_KEY = "presupuesto_json"  # clave dentro de Parametros
@@ -1714,7 +1728,39 @@ with tab_flujo:
 
     mes_corte = int(fecha_corte.month)
     meses_num = list(range(1, 13))
+        # =========================
+    # AJUSTE MANUAL CXP
+    # =========================
+    ajuste_cxp_manual = cargar_ajuste_cxp_manual()
 
+    with st.expander("💰 Ajuste manual de la bolsa CxP", expanded=False):
+
+        st.caption(
+            "Usa este valor para corregir la bolsa calculada por el sistema. "
+            "Ejemplo: si el sistema calcula $300 millones y realmente debes "
+            "$350 millones, escribe +50.000.000. "
+            "También puedes usar valores negativos."
+        )
+
+        with st.form("form_ajuste_cxp_manual"):
+
+            ajuste_cxp_edit = st.number_input(
+                "Ajuste manual CxP",
+                value=float(ajuste_cxp_manual),
+                step=1000000.0,
+                format="%.0f"
+            )
+
+            guardar_ajuste = st.form_submit_button(
+                "Guardar ajuste CxP"
+            )
+
+        if guardar_ajuste:
+            guardar_ajuste_cxp_manual(float(ajuste_cxp_edit))
+            read_ws_as_df.clear()
+            st.cache_data.clear()
+            st.success("✅ Ajuste de CxP guardado.")
+            st.rerun()
     # -------- egresos manuales --------
     egm_df = egresos_manuales_drive_a_df(int(año), meses_num, EGRESOS_MANUALES_FILAS)
 
@@ -1853,6 +1899,39 @@ with tab_flujo:
             if m < mes_corte:
                 base_ing[m] = 0.0
         base_ing[mes_corte] += vencido
+            # =========================
+        # APLICAR AJUSTE MANUAL CXP
+        # =========================
+        bolsa_cxp_antes_ajuste = float(egresos_proy.sum())
+    
+        egresos_proy[mes_corte] = max(
+            0.0,
+            float(egresos_proy.get(mes_corte, 0.0))
+            + float(ajuste_cxp_manual)
+        )
+    
+        bolsa_cxp_ajustada = float(egresos_proy.sum())
+        st.markdown("### Bolsa CxP")
+
+        c1, c2, c3 = st.columns(3)
+    
+        with c1:
+            st.metric(
+                "CxP calculada",
+                f"${bolsa_cxp_antes_ajuste:,.0f}"
+            )
+    
+        with c2:
+            st.metric(
+                "Ajuste manual",
+                f"${ajuste_cxp_manual:,.0f}"
+            )
+    
+        with c3:
+            st.metric(
+                "CxP ajustada",
+                f"${bolsa_cxp_ajustada:,.0f}"
+            )
 
        # ✅ NETEO CON ARRASTRE DE PAGOS (RC) A MESES FUTUROS
         ingresos_proy_neto = pd.Series(0.0, index=meses_num)
