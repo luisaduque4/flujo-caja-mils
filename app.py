@@ -758,24 +758,40 @@ RP_CLASIF_COLS = [
 ]
 
 
+@st.cache_resource
 def _get_or_create_rp_ws():
     sh = _open_sheet()
+    last_err = None
 
-    try:
-        ws = sh.worksheet(RP_CLASIF_WS)
-    except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(
-            title=RP_CLASIF_WS,
-            rows=1000,
-            cols=len(RP_CLASIF_COLS)
-        )
-        ws.update(
-            "A1",
-            [RP_CLASIF_COLS],
-            value_input_option="RAW"
-        )
+    for attempt in range(4):
+        try:
+            return sh.worksheet(RP_CLASIF_WS)
 
-    return ws
+        except gspread.exceptions.WorksheetNotFound:
+            try:
+                ws = sh.add_worksheet(
+                    title=RP_CLASIF_WS,
+                    rows=1000,
+                    cols=len(RP_CLASIF_COLS)
+                )
+
+                ws.update(
+                    "A1",
+                    [RP_CLASIF_COLS],
+                    value_input_option="RAW"
+                )
+
+                return ws
+
+            except APIError as e:
+                last_err = e
+
+        except APIError as e:
+            last_err = e
+
+        time.sleep(1.5 * (attempt + 1))
+
+    raise last_err
 
 
 def _rp_a_bool(v):
@@ -818,9 +834,23 @@ def crear_rp_key(df: pd.DataFrame) -> pd.Series:
     return comp + "|" + fecha + "|" + valor
 
 
+@st.cache_data(ttl=60)
 def leer_clasificacion_rp() -> pd.DataFrame:
     ws = _get_or_create_rp_ws()
-    values = ws.get_all_values()
+
+    last_err = None
+
+    for attempt in range(4):
+        try:
+            values = ws.get_all_values()
+            break
+
+        except APIError as e:
+            last_err = e
+            time.sleep(1.5 * (attempt + 1))
+
+    else:
+        raise last_err
 
     if len(values) <= 1:
         return pd.DataFrame(columns=RP_CLASIF_COLS)
@@ -884,6 +914,7 @@ def guardar_clasificacion_rp(df_nuevo: pd.DataFrame):
         [RP_CLASIF_COLS] + total.fillna("").values.tolist(),
         value_input_option="USER_ENTERED"
     )
+    leer_clasificacion_rp.clear()
 def read_tabla_drive(ws_name: str, columnas: list[str]) -> pd.DataFrame:
     df = read_ws_as_df(ws_name)  # lectura cacheada
     for c in columnas:
