@@ -1805,25 +1805,28 @@ with tab_flujo:
             "También puedes usar valores negativos."
         )
 
-         with st.form("form_ajuste_cxp_manual"):
-    
+        with st.form("form_ajuste_cxp_manual"):
+
             ajuste_cxp_edit = st.number_input(
                 "Ajuste manual CxP",
                 value=float(ajuste_cxp_manual),
                 step=1000000.0,
                 format="%.0f"
             )
-    
+
             guardar_ajuste = st.form_submit_button(
                 "Guardar ajuste CxP"
             )
-    
+
         if guardar_ajuste:
             guardar_ajuste_cxp_manual(float(ajuste_cxp_edit))
             read_ws_as_df.clear()
             st.cache_data.clear()
             st.success("✅ Ajuste de CxP guardado.")
             st.rerun()
+
+   
+    )
     # -------- egresos manuales --------
     egm_df = egresos_manuales_drive_a_df(int(año), meses_num, EGRESOS_MANUALES_FILAS)
 
