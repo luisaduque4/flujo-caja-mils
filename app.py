@@ -2294,16 +2294,33 @@ with tab_flujo:
         # =========================
     # APLICAR AJUSTE MANUAL CXP
     # =========================
-    bolsa_cxp_antes_ajuste = float(egresos_proy.sum())
+        # =========================
+    # SEPARAR BOLSA CXP DE FACTURAS FUTURAS
+    # =========================
 
-    egresos_proy[mes_corte] = max(
+    # Guardamos la proyección normal
+    egresos_proy_natural = egresos_proy.copy()
+
+    # La bolsa que queremos programar es la que cayó al mes de corte
+    bolsa_cxp_antes_ajuste = float(
+        egresos_proy_natural.get(mes_corte, 0.0)
+    )
+
+    # Quitamos esa bolsa del flujo natural,
+    # porque después la vamos a repartir por porcentajes
+    egresos_proy_natural[mes_corte] = 0.0
+
+    # Aplicar corrección manual solamente a la bolsa
+    bolsa_cxp_ajustada = max(
         0.0,
-        float(egresos_proy.get(mes_corte, 0.0))
+        bolsa_cxp_antes_ajuste
         + float(ajuste_cxp_manual)
     )
 
-    bolsa_cxp_ajustada = float(egresos_proy.sum())
-
+    # Si NO usamos programación porcentual,
+    # la bolsa sigue apareciendo completa en el mes de corte
+    egresos_proy = egresos_proy_natural.copy()
+    egresos_proy[mes_corte] += bolsa_cxp_ajustada
     st.markdown("### Bolsa CxP")
 
     c1, c2, c3 = st.columns(3)
@@ -2552,8 +2569,12 @@ with tab_flujo:
                         mes_num_prog
                     ] += valor_programado
 
-            # La matriz usará la programación del año visible
-            egresos_proy = egresos_proy_programados
+            # Facturas futuras normales
+            # + bolsa CxP programada
+            egresos_proy = egresos_proy_natural.add(
+                egresos_proy_programados,
+                fill_value=0.0
+            )
 
             detalle_prog = pd.DataFrame(
                 detalle_programacion
