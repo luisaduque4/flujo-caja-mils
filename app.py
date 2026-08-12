@@ -662,6 +662,147 @@ def guardar_presupuesto_drive(pres_data: dict):
 CLIENTES_WS = "Clientes"
 PROVEEDORES_WS = "Proveedores"
 
+# =========================
+# CLASIFICACIÓN RP
+# =========================
+RP_CLASIF_WS = "Clasificacion_RP"
+
+RP_CLASIF_COLS = [
+    "RP_key",
+    "Comprobante",
+    "Fecha",
+    "Tercero",
+    "Valor",
+    "Reduce_CxP",
+]
+
+
+def _get_or_create_rp_ws():
+    sh = _open_sheet()
+
+    try:
+        ws = sh.worksheet(RP_CLASIF_WS)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(
+            title=RP_CLASIF_WS,
+            rows=1000,
+            cols=len(RP_CLASIF_COLS)
+        )
+        ws.update(
+            "A1",
+            [RP_CLASIF_COLS],
+            value_input_option="RAW"
+        )
+
+    return ws
+
+
+def _rp_a_bool(v):
+    if isinstance(v, bool):
+        return v
+
+    txt = str(v).strip().upper()
+
+    return txt in {
+        "TRUE",
+        "1",
+        "SI",
+        "SÍ",
+        "YES",
+        "X"
+    }
+
+
+def crear_rp_key(df: pd.DataFrame) -> pd.Series:
+    comp = (
+        df["Comprobante"]
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
+
+    fecha = (
+        pd.to_datetime(df["Fecha"], errors="coerce")
+        .dt.strftime("%Y-%m-%d")
+        .fillna("")
+    )
+
+    valor = (
+        pd.to_numeric(df["Valor"], errors="coerce")
+        .fillna(0.0)
+        .round(2)
+        .map(lambda x: f"{x:.2f}")
+    )
+
+    return comp + "|" + fecha + "|" + valor
+
+
+def leer_clasificacion_rp() -> pd.DataFrame:
+    ws = _get_or_create_rp_ws()
+    values = ws.get_all_values()
+
+    if len(values) <= 1:
+        return pd.DataFrame(columns=RP_CLASIF_COLS)
+
+    headers = values[0]
+    rows = values[1:]
+
+    df = pd.DataFrame(rows, columns=headers)
+
+    for c in RP_CLASIF_COLS:
+        if c not in df.columns:
+            df[c] = ""
+
+    df = df[RP_CLASIF_COLS].copy()
+
+    df["Reduce_CxP"] = df["Reduce_CxP"].apply(_rp_a_bool)
+
+    return df
+
+
+def guardar_clasificacion_rp(df_nuevo: pd.DataFrame):
+    ws = _get_or_create_rp_ws()
+
+    nuevo = df_nuevo[RP_CLASIF_COLS].copy()
+
+    # leer lo que ya estaba guardado
+    anterior = leer_clasificacion_rp()
+
+    # conservar RP antiguos que no estén en esta edición
+    if not anterior.empty:
+        anterior = anterior[
+            ~anterior["RP_key"].isin(nuevo["RP_key"])
+        ].copy()
+
+        total = pd.concat(
+            [anterior, nuevo],
+            ignore_index=True
+        )
+    else:
+        total = nuevo.copy()
+
+    total["Fecha"] = (
+        pd.to_datetime(total["Fecha"], errors="coerce")
+        .dt.strftime("%Y-%m-%d")
+        .fillna("")
+    )
+
+    total["Valor"] = (
+        pd.to_numeric(total["Valor"], errors="coerce")
+        .fillna(0.0)
+    )
+
+    total["Reduce_CxP"] = total["Reduce_CxP"].apply(
+        lambda x: "SI" if _rp_a_bool(x) else "NO"
+    )
+
+    ws.clear()
+
+    ws.update(
+        "A1",
+        [RP_CLASIF_COLS] + total.fillna("").values.tolist(),
+        value_input_option="USER_ENTERED"
+    )
 def read_tabla_drive(ws_name: str, columnas: list[str]) -> pd.DataFrame:
     df = read_ws_as_df(ws_name)  # lectura cacheada
     for c in columnas:
@@ -1830,6 +1971,130 @@ with tab_flujo:
         pagos_rp = dfe[es_rp].copy()
         docs     = dfe[~es_rp].copy()
 
+                # =========================
+        # CLASIFICAR RP: cuáles reducen CxP
+        # =========================
+        pagos_cxp = pd.Series(0.0, index=meses_num)
+
+        if not pagos_rp.empty:
+
+            # llave única para recordar cada decisión
+            pagos_rp["RP_key"] = crear_rp_key(pagos_rp)
+
+            # leer clasificaciones guardadas
+            clas_rp = leer_clasificacion_rp()
+
+            mapa_reduce = {}
+
+            if not clas_rp.empty:
+                mapa_reduce = dict(
+                    zip(
+                        clas_rp["RP_key"],
+                        clas_rp["Reduce_CxP"]
+                    )
+                )
+
+            # NUEVO RP = Sí por defecto
+            # así conservamos el comportamiento que ya tenías
+            pagos_rp["Reduce_CxP"] = (
+                pagos_rp["RP_key"]
+                .map(mapa_reduce)
+                .fillna(True)
+                .astype(bool)
+            )
+
+            # tabla editable
+            rp_editor_base = pagos_rp[
+                [
+                    "RP_key",
+                    "Comprobante",
+                    "Fecha",
+                    "Tercero",
+                    "Valor",
+                    "Reduce_CxP",
+                ]
+            ].copy()
+
+            rp_editor_base = rp_editor_base.sort_values(
+                ["Fecha", "Comprobante"],
+                ascending=[False, False]
+            )
+
+            with st.expander(
+                "🧾 Clasificar RP que reducen la bolsa de CxP",
+                expanded=False
+            ):
+
+                st.caption(
+                    "Todos los RP siguen siendo egresos reales. "
+                    "Desmarca Reduce CxP cuando el RP corresponda, "
+                    "por ejemplo, a intereses, amortización, averías "
+                    "u otro pago que NO esté pagando cartera de proveedores."
+                )
+
+                with st.form("form_clasificacion_rp"):
+
+                    rp_edit = st.data_editor(
+                        rp_editor_base,
+                        use_container_width=True,
+                        num_rows="fixed",
+                        hide_index=True,
+                        column_config={
+                            "RP_key": None,
+
+                            "Comprobante": st.column_config.TextColumn(
+                                "RP",
+                                disabled=True
+                            ),
+
+                            "Fecha": st.column_config.DateColumn(
+                                "Fecha",
+                                disabled=True
+                            ),
+
+                            "Tercero": st.column_config.TextColumn(
+                                "Tercero",
+                                disabled=True
+                            ),
+
+                            "Valor": st.column_config.NumberColumn(
+                                "Valor",
+                                format="$ %.0f",
+                                disabled=True
+                            ),
+
+                            "Reduce_CxP": st.column_config.CheckboxColumn(
+                                "Reduce CxP",
+                                default=True
+                            ),
+                        },
+                    )
+
+                    guardar_rp = st.form_submit_button(
+                        "Guardar clasificación RP"
+                    )
+
+                if guardar_rp:
+                    guardar_clasificacion_rp(rp_edit)
+
+                    st.success(
+                        "✅ Clasificación de RP guardada."
+                    )
+
+                    st.rerun()
+
+            # SOLO estos RP pueden pagar/reducir la bolsa CxP
+            rp_cxp = pagos_rp[
+                pagos_rp["Reduce_CxP"] == True
+            ].copy()
+
+            if not rp_cxp.empty:
+                pagos_cxp = (
+                    rp_cxp
+                    .groupby(rp_cxp["Fecha"].dt.month)["Valor"]
+                    .sum()
+                    .reindex(meses_num, fill_value=0.0)
+                )
         # ✅ PASO C1 real: crear Proveedor_key desde el histórico de egresos (docs)
         docs, col_origen_docs = preparar_proveedor_key(docs)
 
@@ -1895,7 +2160,7 @@ with tab_flujo:
     for m in meses_num:
         # solo conocemos pagos reales hasta el mes_corte
         if m <= mes_corte:
-            bolsa_pagos += float(egresos_reales.get(m, 0.0))
+            bolsa_pagos += float(pagos_cxp.get(m, 0.0))
     
         venc = float(base.get(m, 0.0))  # lo que "debería salir" por vencimiento
     
