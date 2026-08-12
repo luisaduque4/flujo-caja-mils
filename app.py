@@ -628,7 +628,7 @@ def cargar_ajuste_cxp_manual() -> float:
 
 
 def _manual(valor: float):
-    upsert_parametro("ajuste_cxp_manual", float(valor))
+    
 import json
 
 PRESUPUESTO_KEY = "presupuesto_json"  # clave dentro de Parametros
