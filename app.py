@@ -616,6 +616,7 @@ def guardar_config_drive(año_new: int, saldo_new: float, dias_new: int, cxp_ini
     upsert_parametro("cxc_ini_bolsa", cxc_ini_new)
 
 # =========================
+# =========================
 # SALDO REAL BASE CXP
 # =========================
 CXP_REAL_KEY = "cxp_real_json"
@@ -629,8 +630,6 @@ def cargar_cxp_real() -> dict:
         "activo": False,
         "saldo_base": 0.0,
         "fecha_base": "",
-        "rp_existentes_base": [],
-        "rp_reduce_base": [],
     }
 
     if not raw:
@@ -651,36 +650,18 @@ def cargar_cxp_real() -> dict:
             data.get("fecha_base", "")
         )
 
-        base["rp_existentes_base"] = list(
-            data.get("rp_existentes_base", [])
-        )
-
-        base["rp_reduce_base"] = list(
-            data.get("rp_reduce_base", [])
-        )
-
         return base
 
     except:
         return base
 
 
-def guardar_cxp_real(
-    saldo_base: float,
-    rp_existentes_base: list,
-    rp_reduce_base: list
-):
+def guardar_cxp_real(saldo_base: float):
     data = {
         "activo": True,
         "saldo_base": float(saldo_base),
         "fecha_base": datetime.now().strftime(
             "%Y-%m-%d %H:%M:%S"
-        ),
-        "rp_existentes_base": list(
-            rp_existentes_base
-        ),
-        "rp_reduce_base": list(
-            rp_reduce_base
         ),
     }
 
@@ -688,6 +669,8 @@ def guardar_cxp_real(
         CXP_REAL_KEY,
         json.dumps(data, ensure_ascii=False)
     )
+
+    read_ws_as_df.clear()
 # =========================
 # PROGRAMACIÓN PORCENTUAL CXP
 # =========================
@@ -1905,7 +1888,10 @@ with tab_flujo:
     # eliminar duplicados en egresos
     if "Comprobante" in dfe.columns:
         cols_dup_e = [c for c in ["Comprobante", "Fecha", "Valor"] if c in dfe.columns]
-        dfe = dfe.drop_duplicates(subset=cols_dup_e, keep="last")
+        dfe = dfe.drop_duplicates(
+            subset=cols_dup_e,
+            keep="first"
+        )
 
 # =========================
 # INGRESOS = RC reales + FV proyectadas (por días) con roll-forward y neteo
@@ -2338,53 +2324,7 @@ with tab_flujo:
             base[mes_corte] += float(cxp_cfg)
 
         # =========================
-    # FOTO BASE DE CXP
-    # =========================
-    cxp_real_data = cargar_cxp_real()
-
-    pagos_cxp_para_neteo = pagos_cxp.copy()
-
-    # Si ya fijamos una bolsa real,
-    # los RP posteriores NO vuelven a tocar
-    # la reconstrucción histórica.
-    if cxp_real_data.get("activo", False):
-
-        rp_reduce_base = set(
-            cxp_real_data.get(
-                "rp_reduce_base",
-                []
-            )
-        )
-
-        if not rp_cxp.empty:
-
-            rp_antiguos_reduce = rp_cxp[
-                rp_cxp["RP_key"].isin(
-                    rp_reduce_base
-                )
-            ].copy()
-
-            if not rp_antiguos_reduce.empty:
-
-                pagos_cxp_para_neteo = (
-                    rp_antiguos_reduce
-                    .groupby(
-                        rp_antiguos_reduce[
-                            "Fecha"
-                        ].dt.month
-                    )["Valor"]
-                    .sum()
-                    .reindex(
-                        meses_num,
-                        fill_value=0.0
-                    )
-                )
-
-            else:
-                pagos_cxp_para_neteo = pd.Series(
-                    0.0,
-                    index=meses_num
-                )
+    
     
     # ✅ NETEO CORRECTO: los pagos reales (RP) pagan la proyección (base)
     egresos_proy = pd.Series(0.0, index=meses_num)
@@ -2394,7 +2334,7 @@ with tab_flujo:
     for m in meses_num:
         # solo conocemos pagos reales hasta el mes_corte
         if m <= mes_corte:
-            bolsa_pagos += float(pagos_cxp_para_neteo.get(m, 0.0))
+            bolsa_pagos += float(pagos_cxp.get(m, 0.0))
     
         venc = float(base.get(m, 0.0))  # lo que "debería salir" por vencimiento
     
@@ -2413,62 +2353,122 @@ with tab_flujo:
     # =========================
         # =========================
         # =========================
+        # =========================
     # BOLSA REAL CXP
-    # =========================
-
-    # Guardamos proyección normal:
-    # facturas que todavía siguen su calendario.
-    egresos_proy_natural = egresos_proy.copy()
-
-    # Quitamos del mes actual la bolsa vieja reconstruida.
-    # La reemplazaremos por nuestra bolsa real.
-    egresos_proy_natural[mes_corte] = 0.0
-
-
-    # =========================
-    # CALCULAR RP NUEVOS
     # =========================
     cxp_real_data = cargar_cxp_real()
 
     rp_nuevos_valor = 0.0
 
+    # -------------------------------------------------
+    # SI YA REGISTRAMOS UNA FOTO REAL DE CXP
+    # -------------------------------------------------
     if cxp_real_data.get("activo", False):
 
-        rp_existentes_base = set(
-            cxp_real_data.get(
-                "rp_existentes_base",
-                []
-            )
+        saldo_base_cxp = float(
+            cxp_real_data.get("saldo_base", 0.0)
         )
 
-        if not rp_cxp.empty:
+        fecha_base_cxp = pd.to_datetime(
+            cxp_real_data.get("fecha_base", ""),
+            errors="coerce"
+        )
 
-            rp_nuevos = rp_cxp[
-                ~rp_cxp["RP_key"].isin(
-                    rp_existentes_base
-                )
+        # =============================================
+        # RP NUEVOS POSTERIORES A LA FOTO
+        # =============================================
+        rp_nuevos = pd.DataFrame()
+
+        if (
+            not rp_cxp.empty
+            and "_loaded_at" in rp_cxp.columns
+            and not pd.isna(fecha_base_cxp)
+        ):
+            rp_cxp_tmp = rp_cxp.copy()
+
+            rp_cxp_tmp["_loaded_at_dt"] = pd.to_datetime(
+                rp_cxp_tmp["_loaded_at"],
+                errors="coerce"
+            )
+
+            rp_nuevos = rp_cxp_tmp[
+                rp_cxp_tmp["_loaded_at_dt"] > fecha_base_cxp
             ].copy()
 
-            rp_nuevos_valor = float(
-                rp_nuevos["Valor"].sum()
-            )
+            if not rp_nuevos.empty:
+                rp_nuevos_valor = float(
+                    rp_nuevos["Valor"].sum()
+                )
 
-        saldo_base_cxp = float(
-            cxp_real_data.get(
-                "saldo_base",
-                0.0
-            )
-        )
-
+        # Los RP nuevos marcados Reduce CxP
+        # bajan directamente la foto de la bolsa.
         bolsa_cxp_ajustada = max(
             0.0,
-            saldo_base_cxp
-            - rp_nuevos_valor
+            saldo_base_cxp - rp_nuevos_valor
         )
 
+        # =============================================
+        # FACTURAS NUEVAS DESPUÉS DE LA FOTO
+        # =============================================
+        # Las facturas que YA existían cuando dijiste
+        # "debo 108 millones" están incluidas en esos 108.
+        # Solo proyectamos aparte documentos cargados
+        # DESPUÉS de esa foto.
+        egresos_proy_natural = pd.Series(
+            0.0,
+            index=meses_num
+        )
+
+        if (
+            not docs.empty
+            and "_loaded_at" in docs.columns
+            and not pd.isna(fecha_base_cxp)
+        ):
+            docs_nuevos = docs.copy()
+
+            docs_nuevos["_loaded_at_dt"] = pd.to_datetime(
+                docs_nuevos["_loaded_at"],
+                errors="coerce"
+            )
+
+            docs_nuevos = docs_nuevos[
+                docs_nuevos["_loaded_at_dt"] > fecha_base_cxp
+            ].copy()
+
+            if not docs_nuevos.empty:
+                egresos_proy_natural = (
+                    docs_nuevos
+                    .groupby("mes_venc")["valor_doc"]
+                    .sum()
+                    .reindex(
+                        meses_num,
+                        fill_value=0.0
+                    )
+                )
+
+                # Si una factura nueva ya quedó vencida,
+                # la llevamos al mes de corte.
+                vencido_nuevo = float(
+                    egresos_proy_natural.loc[
+                        [
+                            m for m in meses_num
+                            if m < mes_corte
+                        ]
+                    ].sum()
+                )
+
+                for m in meses_num:
+                    if m < mes_corte:
+                        egresos_proy_natural[m] = 0.0
+
+                egresos_proy_natural[
+                    mes_corte
+                ] += vencido_nuevo
+
+    # -------------------------------------------------
+    # SI TODAVÍA NO HAY FOTO REAL
+    # -------------------------------------------------
     else:
-        # Mientras no hayas establecido
-        # saldo real, usamos lo calculado.
         saldo_base_cxp = float(
             egresos_proy.get(
                 mes_corte,
@@ -2476,16 +2476,15 @@ with tab_flujo:
             )
         )
 
-        bolsa_cxp_ajustada = (
-            saldo_base_cxp
-        )
+        bolsa_cxp_ajustada = saldo_base_cxp
+
+        egresos_proy_natural = egresos_proy.copy()
+        egresos_proy_natural[mes_corte] = 0.0
 
 
-    # Sin programación porcentual,
-    # la bolsa completa cae al mes actual.
-    egresos_proy = (
-        egresos_proy_natural.copy()
-    )
+    # Si NO se usa programación porcentual,
+    # la bolsa completa queda en el mes de corte.
+    egresos_proy = egresos_proy_natural.copy()
 
     egresos_proy[mes_corte] += (
         bolsa_cxp_ajustada
@@ -2525,21 +2524,17 @@ with tab_flujo:
 
         st.caption(
             "Escribe directamente cuánto debes hoy. "
-            "Todo RP que ya exista quedará incluido "
-            "en este saldo. Desde ese momento, solo "
-            "los RP nuevos marcados como Reduce CxP "
-            "disminuirán la bolsa."
+            "Todo lo cargado hasta este momento queda "
+            "incluido en ese saldo. Desde ese instante, "
+            "solo los RP nuevos marcados como Reduce CxP "
+            "disminuyen la bolsa."
         )
 
-        with st.form(
-            "form_saldo_real_cxp"
-        ):
+        with st.form("form_saldo_real_cxp"):
 
             saldo_real_edit = st.number_input(
                 "Saldo real actual CxP",
-                value=float(
-                    bolsa_cxp_ajustada
-                ),
+                value=float(bolsa_cxp_ajustada),
                 min_value=0.0,
                 step=1000000.0,
                 format="%.0f"
@@ -2553,45 +2548,15 @@ with tab_flujo:
 
         if guardar_saldo_real:
 
-            # Todos los RP que existen AHORA
-            # quedan incluidos en la foto.
-            if not pagos_rp.empty:
-                rp_existentes_hoy = (
-                    pagos_rp["RP_key"]
-                    .astype(str)
-                    .tolist()
-                )
-            else:
-                rp_existentes_hoy = []
-
-            # Guardamos además cuáles de esos
-            # reducían CxP en este momento.
-            if not rp_cxp.empty:
-                rp_reduce_hoy = (
-                    rp_cxp["RP_key"]
-                    .astype(str)
-                    .tolist()
-                )
-            else:
-                rp_reduce_hoy = []
-
             guardar_cxp_real(
-                float(saldo_real_edit),
-                rp_existentes_hoy,
-                rp_reduce_hoy
+                float(saldo_real_edit)
             )
-
-            read_ws_as_df.clear()
-            st.cache_data.clear()
 
             st.success(
                 "✅ Nuevo saldo real de CxP guardado."
             )
 
             st.rerun()
-    # =========================
-    # APLICAR PROGRAMACIÓN CXP
-        # =========================
     # PREPARAR PROGRAMACIÓN CXP
     # =========================
     nombres_meses = {
