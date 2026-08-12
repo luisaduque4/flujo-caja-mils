@@ -2327,7 +2327,8 @@ with tab_flujo:
         )
 
         # =========================
-    # PROGRAMAR BOLSA CXP POR MES
+        # =========================
+    # PROGRAMAR BOLSA CXP POR MES - 36 MESES
     # =========================
     nombres_meses = {
         1: "Enero",
@@ -2344,31 +2345,55 @@ with tab_flujo:
         12: "Diciembre",
     }
 
-    prog_cxp = cargar_programacion_cxp(
+    # La nueva función ya NO recibe año ni meses_num
+    prog_cxp = cargar_programacion_cxp()
+
+    # Crear horizonte de 36 meses desde el mes de corte
+    inicio_prog = pd.Timestamp(
         int(año),
-        meses_num
+        int(mes_corte),
+        1
     )
 
-    # Solo mostramos desde el mes de corte hacia adelante
-    meses_programables = [
-        m for m in meses_num
-        if m >= mes_corte
+    fechas_programables = [
+        inicio_prog + pd.DateOffset(months=i)
+        for i in range(HORIZONTE_CXP_MESES)
     ]
 
+    meses_programables = []
+
+    for fecha_prog in fechas_programables:
+        key_mes = f"{fecha_prog.year:04d}-{fecha_prog.month:02d}"
+
+        meses_programables.append({
+            "key": key_mes,
+            "fecha": fecha_prog,
+            "nombre": (
+                f"{nombres_meses[fecha_prog.month]} "
+                f"{fecha_prog.year}"
+            )
+        })
+
+    # Tabla que verá el usuario
     prog_df = pd.DataFrame({
-        "Mes_num": meses_programables,
-        "Mes": [
-            nombres_meses[m]
-            for m in meses_programables
+        "Mes_key": [
+            x["key"]
+            for x in meses_programables
         ],
+
+        "Mes": [
+            x["nombre"]
+            for x in meses_programables
+        ],
+
         "Porcentaje": [
             float(
                 prog_cxp["porcentajes"].get(
-                    str(m),
+                    x["key"],
                     0.0
                 )
             )
-            for m in meses_programables
+            for x in meses_programables
         ],
     })
 
@@ -2378,7 +2403,8 @@ with tab_flujo:
     ):
 
         st.caption(
-            "Distribuye la bolsa CxP ajustada entre los meses. "
+            "Distribuye la bolsa CxP ajustada hasta en 36 meses. "
+            "Puedes repartirla entre varios años. "
             "Los porcentajes deben sumar exactamente 100%."
         )
 
@@ -2397,7 +2423,7 @@ with tab_flujo:
                 hide_index=True,
                 num_rows="fixed",
                 column_config={
-                    "Mes_num": None,
+                    "Mes_key": None,
 
                     "Mes": st.column_config.TextColumn(
                         "Mes",
@@ -2440,14 +2466,11 @@ with tab_flujo:
                 )
 
             else:
-                porcentajes_guardar = {
-                    str(m): 0.0
-                    for m in meses_num
-                }
+                porcentajes_guardar = {}
 
                 for _, r in prog_edit.iterrows():
 
-                    m = int(r["Mes_num"])
+                    key_mes = str(r["Mes_key"])
 
                     pct = pd.to_numeric(
                         r["Porcentaje"],
@@ -2457,10 +2480,9 @@ with tab_flujo:
                     if pd.isna(pct):
                         pct = 0.0
 
-                    porcentajes_guardar[str(m)] = float(pct)
+                    porcentajes_guardar[key_mes] = float(pct)
 
                 guardar_programacion_cxp(
-                    int(año),
                     bool(prog_activa_edit),
                     porcentajes_guardar
                 )
@@ -2474,7 +2496,7 @@ with tab_flujo:
 
                 st.rerun()
 
-        # =========================
+    # =========================
     # APLICAR PROGRAMACIÓN CXP
     # =========================
     if prog_cxp.get("activo", False):
@@ -2482,63 +2504,60 @@ with tab_flujo:
         total_pct = sum(
             float(
                 prog_cxp["porcentajes"].get(
-                    str(m),
+                    x["key"],
                     0.0
                 )
             )
-            for m in meses_programables
+            for x in meses_programables
         )
 
-        # Solo se aplica si suma 100%
         if abs(total_pct - 100.0) <= 0.01:
 
+            # La matriz principal sigue siendo del año seleccionado
             egresos_proy_programados = pd.Series(
                 0.0,
                 index=meses_num
             )
 
-            for m in meses_programables:
+            detalle_programacion = []
+
+            for item in meses_programables:
 
                 pct = float(
                     prog_cxp["porcentajes"].get(
-                        str(m),
+                        item["key"],
                         0.0
                     )
                 )
 
-                egresos_proy_programados[m] = (
+                valor_programado = (
                     float(bolsa_cxp_ajustada)
                     * pct
                     / 100.0
                 )
 
-            # Esta es ahora la distribución que verá la matriz
+                detalle_programacion.append({
+                    "Mes": item["nombre"],
+                    "%": pct,
+                    "Valor programado": valor_programado,
+                })
+
+                # Solo entra a la matriz del año que estamos viendo
+                if item["fecha"].year == int(año):
+                    mes_num_prog = int(
+                        item["fecha"].month
+                    )
+
+                    egresos_proy_programados[
+                        mes_num_prog
+                    ] += valor_programado
+
+            # La matriz usará la programación del año visible
             egresos_proy = egresos_proy_programados
 
-            # Mostrar qué se programó
-            detalle_prog = pd.DataFrame({
-                "Mes": [
-                    nombres_meses[m]
-                    for m in meses_programables
-                ],
-
-                "%": [
-                    float(
-                        prog_cxp["porcentajes"].get(
-                            str(m),
-                            0.0
-                        )
-                    )
-                    for m in meses_programables
-                ],
-
-                "Valor programado": [
-                    float(
-                        egresos_proy.get(m, 0.0)
-                    )
-                    for m in meses_programables
-                ],
-            })
+            detalle_prog = pd.DataFrame(
+                detalle_programacion
+            )
 
             st.markdown(
                 "#### Distribución programada de CxP"
