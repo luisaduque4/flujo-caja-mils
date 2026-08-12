@@ -2591,6 +2591,47 @@ with tab_flujo:
             st.rerun()
     # =========================
     # APLICAR PROGRAMACIÓN CXP
+        # =========================
+    # PREPARAR PROGRAMACIÓN CXP
+    # =========================
+    nombres_meses = {
+        1: "Enero",
+        2: "Febrero",
+        3: "Marzo",
+        4: "Abril",
+        5: "Mayo",
+        6: "Junio",
+        7: "Julio",
+        8: "Agosto",
+        9: "Septiembre",
+        10: "Octubre",
+        11: "Noviembre",
+        12: "Diciembre",
+    }
+
+    prog_cxp = cargar_programacion_cxp()
+
+    inicio_prog = pd.Timestamp(
+        int(año),
+        int(mes_corte),
+        1
+    )
+
+    fechas_programables = [
+        inicio_prog + pd.DateOffset(months=i)
+        for i in range(HORIZONTE_CXP_MESES)
+    ]
+
+    meses_programables = []
+
+    for fecha_prog in fechas_programables:
+        key_mes = f"{fecha_prog.year:04d}-{fecha_prog.month:02d}"
+
+        meses_programables.append({
+            "key": key_mes,
+            "fecha": fecha_prog,
+            "nombre": f"{nombres_meses[fecha_prog.month]} {fecha_prog.year}"
+        })
     # =========================
     if prog_cxp.get("activo", False):
 
