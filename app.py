@@ -1826,7 +1826,7 @@ with tab_flujo:
             st.rerun()
 
    
-    )
+    
     # -------- egresos manuales --------
     egm_df = egresos_manuales_drive_a_df(int(año), meses_num, EGRESOS_MANUALES_FILAS)
 
