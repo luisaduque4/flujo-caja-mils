@@ -1900,39 +1900,7 @@ with tab_flujo:
                 base_ing[m] = 0.0
         base_ing[mes_corte] += vencido
             # =========================
-        # APLICAR AJUSTE MANUAL CXP
-        # =========================
-        bolsa_cxp_antes_ajuste = float(egresos_proy.sum())
-    
-        egresos_proy[mes_corte] = max(
-            0.0,
-            float(egresos_proy.get(mes_corte, 0.0))
-            + float(ajuste_cxp_manual)
-        )
-    
-        bolsa_cxp_ajustada = float(egresos_proy.sum())
-        st.markdown("### Bolsa CxP")
-
-        c1, c2, c3 = st.columns(3)
-    
-        with c1:
-            st.metric(
-                "CxP calculada",
-                f"${bolsa_cxp_antes_ajuste:,.0f}"
-            )
-    
-        with c2:
-            st.metric(
-                "Ajuste manual",
-                f"${ajuste_cxp_manual:,.0f}"
-            )
-    
-        with c3:
-            st.metric(
-                "CxP ajustada",
-                f"${bolsa_cxp_ajustada:,.0f}"
-            )
-
+       
        # ✅ NETEO CON ARRASTRE DE PAGOS (RC) A MESES FUTUROS
         ingresos_proy_neto = pd.Series(0.0, index=meses_num)
         
@@ -2253,7 +2221,40 @@ with tab_flujo:
     for m in meses_num:
         if m < mes_corte:
             egresos_proy[m] = 0.0       
+        # =========================
+    # APLICAR AJUSTE MANUAL CXP
+    # =========================
+    bolsa_cxp_antes_ajuste = float(egresos_proy.sum())
 
+    egresos_proy[mes_corte] = max(
+        0.0,
+        float(egresos_proy.get(mes_corte, 0.0))
+        + float(ajuste_cxp_manual)
+    )
+
+    bolsa_cxp_ajustada = float(egresos_proy.sum())
+
+    st.markdown("### Bolsa CxP")
+
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        st.metric(
+            "CxP calculada",
+            f"${bolsa_cxp_antes_ajuste:,.0f}"
+        )
+
+    with c2:
+        st.metric(
+            "Ajuste manual",
+            f"${ajuste_cxp_manual:,.0f}"
+        )
+
+    with c3:
+        st.metric(
+            "CxP ajustada",
+            f"${bolsa_cxp_ajustada:,.0f}"
+        )
     # =========================
     # PRESUPUESTO
     # =========================
