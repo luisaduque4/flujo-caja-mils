@@ -2394,7 +2394,7 @@ with tab_flujo:
     for m in meses_num:
         # solo conocemos pagos reales hasta el mes_corte
         if m <= mes_corte:
-            bolsa_pagos += float(pagos_cxp_para_neteo.get(m, 0.0)
+            bolsa_pagos += float(pagos_cxp_para_neteo.get(m, 0.0))
     
         venc = float(base.get(m, 0.0))  # lo que "debería salir" por vencimiento
     
