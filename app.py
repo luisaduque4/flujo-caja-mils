@@ -625,8 +625,71 @@ def cargar_ajuste_cxp_manual() -> float:
         )
     except:
         return 0.0
+        
+def guardar_ajuste_cxp_manual(valor: float):
+    upsert_parametro("ajuste_cxp_manual", float(valor))
+
+# =========================
+# PROGRAMACIÓN PORCENTUAL CXP
+# =========================
+PROGRAMACION_CXP_KEY = "programacion_cxp_json"
 
 
+def cargar_programacion_cxp(anio: int, meses_num: list[int]) -> dict:
+    p = read_parametros()
+    raw = p.get(PROGRAMACION_CXP_KEY, "")
+
+    base = {
+        "anio": int(anio),
+        "activo": False,
+        "porcentajes": {str(m): 0.0 for m in meses_num},
+    }
+
+    if not raw:
+        return base
+
+    try:
+        data = json.loads(raw)
+
+        # Si la programación guardada es de otro año,
+        # empezamos limpia.
+        if int(data.get("anio", anio)) != int(anio):
+            return base
+
+        base["activo"] = bool(data.get("activo", False))
+
+        porcentajes = data.get("porcentajes", {})
+
+        for m in meses_num:
+            base["porcentajes"][str(m)] = float(
+                porcentajes.get(str(m), 0.0) or 0.0
+            )
+
+        return base
+
+    except:
+        return base
+
+
+def guardar_programacion_cxp(
+    anio: int,
+    activo: bool,
+    porcentajes: dict
+):
+    data = {
+        "anio": int(anio),
+        "activo": bool(activo),
+        "porcentajes": {
+            str(k): float(v or 0.0)
+            for k, v in porcentajes.items()
+        },
+    }
+
+    upsert_parametro(
+        PROGRAMACION_CXP_KEY,
+        json.dumps(data, ensure_ascii=False)
+    )
+    
 def _manual(valor: float):
     
 import json
@@ -2255,6 +2318,233 @@ with tab_flujo:
             "CxP ajustada",
             f"${bolsa_cxp_ajustada:,.0f}"
         )
+
+        # =========================
+    # PROGRAMAR BOLSA CXP POR MES
+    # =========================
+    nombres_meses = {
+        1: "Enero",
+        2: "Febrero",
+        3: "Marzo",
+        4: "Abril",
+        5: "Mayo",
+        6: "Junio",
+        7: "Julio",
+        8: "Agosto",
+        9: "Septiembre",
+        10: "Octubre",
+        11: "Noviembre",
+        12: "Diciembre",
+    }
+
+    prog_cxp = cargar_programacion_cxp(
+        int(año),
+        meses_num
+    )
+
+    # Solo mostramos desde el mes de corte hacia adelante
+    meses_programables = [
+        m for m in meses_num
+        if m >= mes_corte
+    ]
+
+    prog_df = pd.DataFrame({
+        "Mes_num": meses_programables,
+        "Mes": [
+            nombres_meses[m]
+            for m in meses_programables
+        ],
+        "Porcentaje": [
+            float(
+                prog_cxp["porcentajes"].get(
+                    str(m),
+                    0.0
+                )
+            )
+            for m in meses_programables
+        ],
+    })
+
+    with st.expander(
+        "📅 Programar pago de la bolsa CxP",
+        expanded=False
+    ):
+
+        st.caption(
+            "Distribuye la bolsa CxP ajustada entre los meses. "
+            "Los porcentajes deben sumar exactamente 100%."
+        )
+
+        with st.form("form_programacion_cxp"):
+
+            prog_activa_edit = st.checkbox(
+                "Usar programación porcentual",
+                value=bool(
+                    prog_cxp.get("activo", False)
+                )
+            )
+
+            prog_edit = st.data_editor(
+                prog_df,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                column_config={
+                    "Mes_num": None,
+
+                    "Mes": st.column_config.TextColumn(
+                        "Mes",
+                        disabled=True
+                    ),
+
+                    "Porcentaje": st.column_config.NumberColumn(
+                        "% de la bolsa",
+                        min_value=0.0,
+                        max_value=100.0,
+                        step=1.0,
+                        format="%.1f %%"
+                    ),
+                }
+            )
+
+            guardar_prog = st.form_submit_button(
+                "Guardar programación CxP"
+            )
+
+        if guardar_prog:
+
+            suma_pct = float(
+                pd.to_numeric(
+                    prog_edit["Porcentaje"],
+                    errors="coerce"
+                )
+                .fillna(0.0)
+                .sum()
+            )
+
+            if (
+                prog_activa_edit
+                and abs(suma_pct - 100.0) > 0.01
+            ):
+                st.error(
+                    f"❌ Los porcentajes suman "
+                    f"{suma_pct:.1f}%. "
+                    f"Deben sumar 100%."
+                )
+
+            else:
+                porcentajes_guardar = {
+                    str(m): 0.0
+                    for m in meses_num
+                }
+
+                for _, r in prog_edit.iterrows():
+
+                    m = int(r["Mes_num"])
+
+                    pct = pd.to_numeric(
+                        r["Porcentaje"],
+                        errors="coerce"
+                    )
+
+                    if pd.isna(pct):
+                        pct = 0.0
+
+                    porcentajes_guardar[str(m)] = float(pct)
+
+                guardar_programacion_cxp(
+                    int(año),
+                    bool(prog_activa_edit),
+                    porcentajes_guardar
+                )
+
+                read_ws_as_df.clear()
+                st.cache_data.clear()
+
+                st.success(
+                    "✅ Programación CxP guardada."
+                )
+
+                st.rerun()
+
+        # =========================
+    # APLICAR PROGRAMACIÓN CXP
+    # =========================
+    if prog_cxp.get("activo", False):
+
+        total_pct = sum(
+            float(
+                prog_cxp["porcentajes"].get(
+                    str(m),
+                    0.0
+                )
+            )
+            for m in meses_programables
+        )
+
+        # Solo se aplica si suma 100%
+        if abs(total_pct - 100.0) <= 0.01:
+
+            egresos_proy_programados = pd.Series(
+                0.0,
+                index=meses_num
+            )
+
+            for m in meses_programables:
+
+                pct = float(
+                    prog_cxp["porcentajes"].get(
+                        str(m),
+                        0.0
+                    )
+                )
+
+                egresos_proy_programados[m] = (
+                    float(bolsa_cxp_ajustada)
+                    * pct
+                    / 100.0
+                )
+
+            # Esta es ahora la distribución que verá la matriz
+            egresos_proy = egresos_proy_programados
+
+            # Mostrar qué se programó
+            detalle_prog = pd.DataFrame({
+                "Mes": [
+                    nombres_meses[m]
+                    for m in meses_programables
+                ],
+
+                "%": [
+                    float(
+                        prog_cxp["porcentajes"].get(
+                            str(m),
+                            0.0
+                        )
+                    )
+                    for m in meses_programables
+                ],
+
+                "Valor programado": [
+                    float(
+                        egresos_proy.get(m, 0.0)
+                    )
+                    for m in meses_programables
+                ],
+            })
+
+            st.markdown(
+                "#### Distribución programada de CxP"
+            )
+
+            st.dataframe(
+                detalle_prog.style.format({
+                    "%": "{:.1f}%",
+                    "Valor programado": "${:,.0f}",
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
     # =========================
     # PRESUPUESTO
     # =========================
