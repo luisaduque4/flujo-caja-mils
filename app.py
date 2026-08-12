@@ -690,7 +690,7 @@ def guardar_programacion_cxp(
         json.dumps(data, ensure_ascii=False)
     )
     
-def _manual(valor: float):
+
     
 import json
 
@@ -1814,9 +1814,12 @@ with tab_flujo:
                 format="%.0f"
             )
 
-            guardar_ajuste = st.form_submit_button(
-                "Guardar ajuste CxP"
-            )
+            if guardar_ajuste:
+                guardar_ajuste_cxp_manual(float(ajuste_cxp_edit))
+                read_ws_as_df.clear()
+                st.cache_data.clear()
+                st.success("✅ Ajuste de CxP guardado.")
+                st.rerun()
 
         if guardar_ajuste:
             (float(ajuste_cxp_edit))
