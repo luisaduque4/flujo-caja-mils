@@ -1756,7 +1756,7 @@ with tab_flujo:
             )
 
         if guardar_ajuste:
-            guardar_ajuste_cxp_manual(float(ajuste_cxp_edit))
+            (float(ajuste_cxp_edit))
             read_ws_as_df.clear()
             st.cache_data.clear()
             st.success("✅ Ajuste de CxP guardado.")
