@@ -1869,7 +1869,7 @@ with tab_flujo:
     mes_corte = int(fecha_corte.month)
     meses_num = list(range(1, 13))
 
-        mes_corte = int(fecha_corte.month)
+    mes_corte = int(fecha_corte.month)
     meses_num = list(range(1, 13))
 
     # =========================
