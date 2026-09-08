@@ -1868,8 +1868,79 @@ with tab_flujo:
 
     mes_corte = int(fecha_corte.month)
     meses_num = list(range(1, 13))
-        # =========================
+
+        mes_corte = int(fecha_corte.month)
+    meses_num = list(range(1, 13))
+
+    # =========================
+    # VENTANA MÓVIL
+    # 6 meses atrás + actual + 6 adelante
+    # =========================
+    nombres_meses_vista = {
+        1: "Ene",
+        2: "Feb",
+        3: "Mar",
+        4: "Abr",
+        5: "May",
+        6: "Jun",
+        7: "Jul",
+        8: "Ago",
+        9: "Sep",
+        10: "Oct",
+        11: "Nov",
+        12: "Dic",
+    }
+
+    mes_central = pd.Timestamp(
+        fecha_corte.year,
+        fecha_corte.month,
+        1
+    )
+
+    periodos_vista = [
+        mes_central + pd.DateOffset(months=i)
+        for i in range(-6, 7)
+    ]
+
+    claves_vista = [
+        f"{f.year:04d}-{f.month:02d}"
+        for f in periodos_vista
+    ]
+
+    nombres_vista = {
+        f"{f.year:04d}-{f.month:02d}":
+        f"{nombres_meses_vista[f.month]} {f.year}"
+        for f in periodos_vista
+    }
     
+        # =========================
+        # =========================
+    # VENTANA MÓVIL DEL FLUJO
+    # 6 meses atrás + actual + 6 adelante
+    # =========================
+    mes_central = pd.Timestamp(
+        fecha_corte.year,
+        fecha_corte.month,
+        1
+    )
+
+    periodos_vista = [
+        mes_central + pd.DateOffset(months=i)
+        for i in range(-6, 7)
+    ]
+
+    claves_vista = [
+        f"{f.year:04d}-{f.month:02d}"
+        for f in periodos_vista
+    ]
+
+    nombres_vista = {
+        f"{f.year:04d}-{f.month:02d}":
+        f"{nombres_meses[f.month][:3]} {f.year}"
+        if "nombres_meses" in locals()
+        else f"{f.month:02d}/{f.year}"
+        for f in periodos_vista
+    }
    
     
     # -------- egresos manuales --------
