@@ -3050,18 +3050,45 @@ with tab_flujo:
         return styles
 
         # =========================
-    # VISTA MÓVIL 6 ATRÁS + ACTUAL + 6 ADELANTE
+    
+        # =========================
+    # MATRIZ MÓVIL
+    # 6 meses atrás + actual + 6 adelante
     # =========================
-    st.markdown("### Vista móvil")
 
-    st.write(
-        " | ".join(
-            nombres_vista[k]
-            for k in claves_vista
-        )
+    matriz_movil = pd.DataFrame(
+        0.0,
+        index=matriz.index,
+        columns=claves_vista
     )
+
+    # Por ahora tomamos de la matriz anual
+    # todos los meses que pertenecen al año seleccionado.
+    for fecha_mes in periodos_vista:
+
+        clave = f"{fecha_mes.year:04d}-{fecha_mes.month:02d}"
+
+        if fecha_mes.year == int(año):
+
+            mes_num = int(fecha_mes.month)
+
+            if mes_num in matriz.columns:
+                matriz_movil[clave] = matriz[mes_num]
+
+    # Nombres bonitos de columnas
+    matriz_movil = matriz_movil.rename(
+        columns=nombres_vista
+    )
+
     st.subheader("Matriz Flujo de Caja")
-    st.dataframe(matriz.style.apply(estilo_matriz, axis=None).format("{:,.0f}"), use_container_width=True)
+
+    st.dataframe(
+        matriz_movil
+        .style
+        .apply(estilo_matriz, axis=None)
+        .format("{:,.0f}"),
+        use_container_width=True
+    )
 
     with st.expander("Diagnóstico"):
         st.write("Ventas histórico filas:", len(dfv))
