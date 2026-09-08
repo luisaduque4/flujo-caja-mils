@@ -2489,14 +2489,34 @@ with tab_flujo:
     egresos_proy[mes_corte] += (
         bolsa_cxp_ajustada
     )
+        # =========================
+    # CXP TOTAL REAL
+    # =========================
 
+    # Deuda nueva que apareció después de la foto
+    facturas_nuevas_valor = float(
+        egresos_proy_natural.sum()
+    )
+
+    # La deuda vieja pendiente ya tiene descontados
+    # los RP nuevos que sí reducen CxP
+    deuda_base_pendiente = float(
+        bolsa_cxp_ajustada
+    )
+
+    # Esta es la verdadera CxP total pendiente
+    bolsa_cxp_total = max(
+        0.0,
+        deuda_base_pendiente
+        + facturas_nuevas_valor
+    )
 
     # =========================
     # MOSTRAR / ACTUALIZAR BOLSA
     # =========================
-    st.markdown("### Bolsa CxP")
+        st.markdown("### Bolsa CxP")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
 
     with c1:
         st.metric(
@@ -2512,9 +2532,107 @@ with tab_flujo:
 
     with c3:
         st.metric(
-            "Bolsa CxP actual",
-            f"${bolsa_cxp_ajustada:,.0f}"
+            "Facturas nuevas",
+            f"+${facturas_nuevas_valor:,.0f}"
         )
+
+    with c4:
+        st.metric(
+            "CxP TOTAL actual",
+            f"${bolsa_cxp_total:,.0f}"
+        )
+
+       # =========================
+    # DETALLE RP QUE RESTAN CXP
+    # =========================
+    with st.expander(
+        "🔎 Ver RP nuevos que están reduciendo CxP",
+        expanded=False
+    ):
+
+        if (
+            "rp_nuevos" in locals()
+            and not rp_nuevos.empty
+        ):
+            cols_rp_detalle = [
+                c for c in [
+                    "Comprobante",
+                    "Fecha",
+                    "Tercero",
+                    "Valor"
+                ]
+                if c in rp_nuevos.columns
+            ]
+
+            st.dataframe(
+                rp_nuevos[
+                    cols_rp_detalle
+                ].sort_values(
+                    "Fecha",
+                    ascending=False
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.write(
+                "**Total que reduce CxP:** "
+                f"${rp_nuevos_valor:,.0f}"
+            )
+
+        else:
+            st.info(
+                "No hay RP nuevos reduciendo CxP."
+            )
+        # =========================
+    # DETALLE FACTURAS NUEVAS
+    # =========================
+    with st.expander(
+        "🔎 Ver facturas nuevas que aumentan CxP",
+        expanded=False
+    ):
+
+        if (
+            "docs_nuevos" in locals()
+            and not docs_nuevos.empty
+        ):
+            cols_docs_detalle = [
+                c for c in [
+                    "Comprobante",
+                    "Fecha",
+                    "Tercero",
+                    "Valor",
+                    "fecha_venc"
+                ]
+                if c in docs_nuevos.columns
+            ]
+
+            st.dataframe(
+                docs_nuevos[
+                    cols_docs_detalle
+                ].sort_values(
+                    "Fecha",
+                    ascending=False
+                ),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.write(
+                "**Total facturas nuevas pendientes:** "
+                f"${facturas_nuevas_valor:,.0f}"
+            )
+
+        else:
+            st.info(
+                "No hay facturas nuevas después "
+                "de la última foto de CxP."
+            )
+
+    st.caption(
+        f"Deuda base pendiente después de RP: "
+        f"${deuda_base_pendiente:,.0f}"
+    )
 
 
     with st.expander(
@@ -2674,6 +2792,79 @@ with tab_flujo:
                 use_container_width=True,
                 hide_index=True
             )
+
+        # =========================
+    # CONTROL DE CUADRE CXP
+    # =========================
+
+    if prog_cxp.get("activo", False):
+
+        total_pct_control = sum(
+            float(
+                prog_cxp["porcentajes"].get(
+                    x["key"],
+                    0.0
+                )
+            )
+            for x in meses_programables
+        )
+
+        if abs(total_pct_control - 100.0) <= 0.01:
+            total_deuda_base_programada = float(
+                deuda_base_pendiente
+            )
+        else:
+            total_deuda_base_programada = 0.0
+
+    else:
+        total_deuda_base_programada = float(
+            deuda_base_pendiente
+        )
+
+
+    total_cxp_programada = (
+        total_deuda_base_programada
+        + facturas_nuevas_valor
+    )
+
+    diferencia_cxp = (
+        bolsa_cxp_total
+        - total_cxp_programada
+    )
+
+
+    st.markdown("#### Control CxP")
+
+    cc1, cc2, cc3 = st.columns(3)
+
+    with cc1:
+        st.metric(
+            "CxP total",
+            f"${bolsa_cxp_total:,.0f}"
+        )
+
+    with cc2:
+        st.metric(
+            "Total pendiente programado",
+            f"${total_cxp_programada:,.0f}"
+        )
+
+    with cc3:
+        st.metric(
+            "Diferencia",
+            f"${diferencia_cxp:,.0f}"
+        )
+
+    if abs(diferencia_cxp) <= 1:
+        st.success(
+            "✅ La CxP está completamente cuadrada."
+        )
+    else:
+        st.error(
+            "⚠️ La CxP y la programación "
+            f"tienen una diferencia de "
+            f"${diferencia_cxp:,.0f}"
+        )
     # =========================
     # PRESUPUESTO
     # =========================
