@@ -3066,8 +3066,8 @@ with tab_flujo:
     # todos los meses que pertenecen al año seleccionado.
         for fecha_mes in periodos_vista:
 
-        clave = f"{fecha_mes.year:04d}-{fecha_mes.month:02d}"
-        mes_num = int(fecha_mes.month)
+            clave = f"{fecha_mes.year:04d}-{fecha_mes.month:02d}"
+            mes_num = int(fecha_mes.month)
 
         # =========================================
         # AÑO ACTUAL: usamos la matriz ya calculada
