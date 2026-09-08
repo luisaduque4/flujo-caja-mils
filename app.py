@@ -2514,7 +2514,7 @@ with tab_flujo:
     # =========================
     # MOSTRAR / ACTUALIZAR BOLSA
     # =========================
-        st.markdown("### Bolsa CxP")
+    st.markdown("### Bolsa CxP")
 
     c1, c2, c3, c4 = st.columns(4)
 
