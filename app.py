@@ -3062,12 +3062,12 @@ with tab_flujo:
         columns=claves_vista
     )
 
-    # Por ahora tomamos de la matriz anual
+        # Por ahora tomamos de la matriz anual
     # todos los meses que pertenecen al año seleccionado.
-        for fecha_mes in periodos_vista:
+    for fecha_mes in periodos_vista:
 
-            clave = f"{fecha_mes.year:04d}-{fecha_mes.month:02d}"
-            mes_num = int(fecha_mes.month)
+        clave = f"{fecha_mes.year:04d}-{fecha_mes.month:02d}"
+        mes_num = int(fecha_mes.month)
 
         # =========================================
         # AÑO ACTUAL: usamos la matriz ya calculada
@@ -3103,7 +3103,6 @@ with tab_flujo:
                     "Egresos (proyectados)",
                     clave
                 ] = valor_cxp_mes
-
     # Nombres bonitos de columnas
     matriz_movil = matriz_movil.rename(
         columns=nombres_vista
