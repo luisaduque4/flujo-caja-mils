@@ -3049,6 +3049,17 @@ with tab_flujo:
                         styles.loc[fila, col] += "color: green; font-weight: 800;"
         return styles
 
+        # =========================
+    # VISTA MÓVIL 6 ATRÁS + ACTUAL + 6 ADELANTE
+    # =========================
+    st.markdown("### Vista móvil")
+
+    st.write(
+        " | ".join(
+            nombres_vista[k]
+            for k in claves_vista
+        )
+    )
     st.subheader("Matriz Flujo de Caja")
     st.dataframe(matriz.style.apply(estilo_matriz, axis=None).format("{:,.0f}"), use_container_width=True)
 
