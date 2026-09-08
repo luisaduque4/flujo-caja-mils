@@ -3064,16 +3064,45 @@ with tab_flujo:
 
     # Por ahora tomamos de la matriz anual
     # todos los meses que pertenecen al año seleccionado.
-    for fecha_mes in periodos_vista:
+        for fecha_mes in periodos_vista:
 
         clave = f"{fecha_mes.year:04d}-{fecha_mes.month:02d}"
+        mes_num = int(fecha_mes.month)
 
+        # =========================================
+        # AÑO ACTUAL: usamos la matriz ya calculada
+        # =========================================
         if fecha_mes.year == int(año):
-
-            mes_num = int(fecha_mes.month)
 
             if mes_num in matriz.columns:
                 matriz_movil[clave] = matriz[mes_num]
+
+        # =========================================
+        # OTROS AÑOS: empezar por CxP programada
+        # =========================================
+        else:
+
+            # Por ahora dejamos las demás filas en 0.
+            # Solo conectamos la programación CxP.
+            if prog_cxp.get("activo", False):
+
+                pct_mes = float(
+                    prog_cxp["porcentajes"].get(
+                        clave,
+                        0.0
+                    )
+                )
+
+                valor_cxp_mes = (
+                    float(bolsa_cxp_ajustada)
+                    * pct_mes
+                    / 100.0
+                )
+
+                matriz_movil.loc[
+                    "Egresos (proyectados)",
+                    clave
+                ] = valor_cxp_mes
 
     # Nombres bonitos de columnas
     matriz_movil = matriz_movil.rename(
